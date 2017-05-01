@@ -16,7 +16,8 @@ cflags-$(CONFIG_ARM)		:= $(subst -pg,,$(KBUILD_CFLAGS)) \
 
 KBUILD_CFLAGS			:= $(cflags-y) \
 				   $(call cc-option,-ffreestanding) \
-				   $(call cc-option,-fno-stack-protector)
+				   $(call cc-option,-fno-stack-protector) \
+				   $(DISABLE_LTO)
 
 GCOV_PROFILE			:= n
 
