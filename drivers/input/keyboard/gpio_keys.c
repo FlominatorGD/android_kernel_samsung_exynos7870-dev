@@ -580,6 +580,10 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 		break;
 	case KEY_HOMEPAGE:
 		printk(KERN_INFO "[sec_input] HOME key is %s\n", !!state ? "pressed" : "released");
+		printk(KERN_INFO "[sec_input] HOME key is %s\n", !!state ? "pressed" : "released");
+		printk(KERN_INFO "[sec_input] GPIO-KEY: Sending KEY_WAKEUP (%s)\n", state ? "pressed" : "released");
+		input_report_key(input, KEY_WAKEUP, state > 0 ? 1 : 0);
+		input_sync(input);
 		break;
 	case KEY_VOLUMEUP:
 		printk(KERN_INFO "[sec_input] VolumeUp key is %s\n", !!state ? "pressed" : "released");
@@ -1073,6 +1077,8 @@ static int gpio_keys_probe(struct platform_device *pdev)
 	}
 
 	device_init_wakeup(&pdev->dev, wakeup);
+
+	set_bit(KEY_WAKEUP, input->keybit);
 
 	return 0;
 
