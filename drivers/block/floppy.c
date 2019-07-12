@@ -3389,6 +3389,27 @@ static int fd_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 	return 0;
 }
 
+<<<<<<< HEAD
+=======
+static bool valid_floppy_drive_params(const short autodetect[8],
+		int native_format)
+{
+	size_t floppy_type_size = ARRAY_SIZE(floppy_type);
+	size_t i = 0;
+
+	for (i = 0; i < 8; ++i) {
+		if (autodetect[i] < 0 ||
+		    autodetect[i] >= floppy_type_size)
+			return false;
+	}
+
+	if (native_format < 0 || native_format >= floppy_type_size)
+		return false;
+
+	return true;
+}
+
+>>>>>>> fa6d9c340bb4 (floppy: fix invalid pointer dereference in drive_name)
 static int fd_locked_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd,
 		    unsigned long param)
 {
@@ -3515,6 +3536,12 @@ static int fd_locked_ioctl(struct block_device *bdev, fmode_t mode, unsigned int
 		SUPBOUND(size, strlen((const char *)outparam) + 1);
 		break;
 	case FDSETDRVPRM:
+<<<<<<< HEAD
+=======
+		if (!valid_floppy_drive_params(inparam.dp.autodetect,
+				inparam.dp.native_format))
+			return -EINVAL;
+>>>>>>> fa6d9c340bb4 (floppy: fix invalid pointer dereference in drive_name)
 		*UDP = inparam.dp;
 		break;
 	case FDGETDRVPRM:
@@ -3712,6 +3739,11 @@ static int compat_setdrvprm(int drive,
 		return -EPERM;
 	if (copy_from_user(&v, arg, sizeof(struct compat_floppy_drive_params)))
 		return -EFAULT;
+<<<<<<< HEAD
+=======
+	if (!valid_floppy_drive_params(v.autodetect, v.native_format))
+		return -EINVAL;
+>>>>>>> fa6d9c340bb4 (floppy: fix invalid pointer dereference in drive_name)
 	mutex_lock(&floppy_mutex);
 	UDP->cmos = v.cmos;
 	UDP->max_dtr = v.max_dtr;
