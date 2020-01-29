@@ -695,13 +695,20 @@ static int gs_start_io(struct gs_port *port)
 	/* queue read requests */
 	port->n_read = 0;
 	started = gs_start_rx(port);
+<<<<<<< HEAD
 	if (!port->port_usb || !port->port.tty) {
 		printk(KERN_ERR "usb:[%s] port_usb or port_tty is NULL!! started(%d)\n",
 						__func__, started);
 		return -EIO;
 	}
 	/* unblock any pending writes into our circular buffer */
+=======
+
+>>>>>>> 9b7c39c059ac (usb: gadget: serial: fix Tx stall after buffer overflow)
 	if (started) {
+		gs_start_tx(port);
+		/* Unblock any pending writes into our circular buffer, in case
+		 * we didn't in gs_start_tx() */
 		tty_wakeup(port->port.tty);
 	} else {
 		gs_free_requests(ep, head, &port->read_allocated);
