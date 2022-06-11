@@ -563,6 +563,11 @@ static ssize_t mtp_read(struct file *fp, char __user *buf,
 	unsigned xfer;
 	int ret = 0;
 
+	if (!cdev) {
+		pr_err("%s: check cdev is NULL\n", __func__);
+		return -EINVAL;
+	}
+
 	DBG(cdev, "mtp_read(%zu)\n", count);
 
 	if (count > MTP_BULK_BUFFER_SIZE)
@@ -589,7 +594,7 @@ static ssize_t mtp_read(struct file *fp, char __user *buf,
 requeue_req:
 	/* queue a request */
 	req = dev->rx_req[0];
-	req->length = count;
+	req->length = len;
 	dev->rx_done = 0;
 	set_read_req_length(req);
 	ret = usb_ep_queue(dev->ep_out, req, GFP_KERNEL);
