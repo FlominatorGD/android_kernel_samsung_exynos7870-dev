@@ -300,6 +300,7 @@ int tsp_open(struct inode *inode, struct file *file)
 int tsp_close(struct inode *inode, struct file *file)
 {
 	pr_info("%s %s\n", SECLOG, __func__);
+
 	return 0;
 }
 

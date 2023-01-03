@@ -716,6 +716,12 @@ config BALANCE_ANON_FILE_RECLAIM
 	  Swapping anonymous pages out to memory can be efficient enough to justify
 	  treating anonymous and file backed pages equally.
 
+config VMPRESSURE_LEVEL_MED
+	int "Threshold to account memory pressure"
+	default 60
+	help
+	  This supports to adjust vmpressure_level_med threshold value
+
 config LARGE_DIRTY_BUFFER
     bool "Use large dirty_threshold value by enabling dirty_ratio"
     default n

@@ -2532,6 +2532,9 @@ static void decon_update_regs(struct decon_device *decon, struct decon_reg_data 
 
 	if (decon_reg_wait_for_update_timeout(DECON_INT, 300 * 1000) < 0) {
 		decon_dump(decon);
+#ifdef CONFIG_LOGGING_BIGDATA_BUG
+		log_decon_bigdata(decon);
+#endif
 		BUG();
 	}
 	decon_set_protected_content_check(decon, regs, true);

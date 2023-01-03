@@ -1358,3 +1358,63 @@ void mif_set_snapshot(bool enable)
 {
 	exynos_ss_set_enable("log_kevents", enable);
 }
+
+/*
+ * Support additional packet capture
+ */
+extern struct list_head ptype_all __read_mostly;
+void mif_queue_skb(struct sk_buff *skb, int dir)
+{
+	struct packet_type *ptype;
+	struct sk_buff *skb2 = NULL;
+	struct packet_type *pt_prev = NULL;
+
+	rcu_read_lock_bh();
+	list_for_each_entry_rcu(ptype, &ptype_all, list) {
+		/* Never send packets back to the socket
+		 * they originated from - MvS (miquels@drinkel.ow.org)
+		 */
+		if ((ptype->dev == skb->dev || !ptype->dev)) {
+			if (pt_prev) {	
+				skb_orphan_frags(skb2, GFP_ATOMIC);
+
+				atomic_inc(&skb2->users);
+				pt_prev->func(skb2, skb2->dev, pt_prev, skb2->dev);
+
+				pt_prev = ptype;
+				continue;
+			}
+
+			skb2 = skb_clone(skb, GFP_ATOMIC);
+			if (!skb2)
+				break;
+
+			//net_timestamp_set(skb2);
+			skb2->tstamp.tv64 = 0;
+			__net_timestamp(skb2);
+
+#if 0 /* we're already reset these filed at cpif driver */
+			/* skb->nh should be correctly
+			   set by sender, so that the second statement is
+			   just protection against buggy protocols.
+			 */
+			skb_reset_mac_header(skb2);
+
+			if (skb_network_header(skb2) < skb2->data ||
+			    skb_network_header(skb2) > skb_tail_pointer(skb2)) {
+				net_crit_ratelimited("protocol %04x is buggy, dev %s\n",
+						     ntohs(skb2->protocol),
+						     dev->name);
+				skb_reset_network_header(skb2);
+			}
+
+			skb2->transport_header = skb2->network_header;
+#endif
+			skb2->pkt_type = dir == RX ? PACKET_HOST : PACKET_OUTGOING;
+			pt_prev = ptype;
+		}
+	}
+	if (pt_prev)
+		pt_prev->func(skb2, skb->dev, pt_prev, skb->dev);
+	rcu_read_unlock_bh();
+}

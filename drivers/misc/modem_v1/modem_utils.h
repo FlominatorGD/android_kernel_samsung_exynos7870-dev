@@ -511,5 +511,7 @@ int argos_task_affinity_setup_label(struct task_struct *p, const char *label,
 #endif
 
 void mif_set_snapshot(bool enable);
+void mif_queue_skb(struct sk_buff *skb, int dir);
+
 #endif/*__MODEM_UTILS_H__*/
 

@@ -26,6 +26,7 @@
 
 #include "modem_prj.h"
 #include "modem_utils.h"
+#include "modem_klat.h"
 
 static u8 sipc5_build_config(struct io_device *iod, struct link_device *ld,
 			     unsigned int count);
@@ -339,6 +340,13 @@ static int rx_multi_pdp(struct sk_buff *skb)
 	skb_reset_network_header(skb);
 	skb_reset_mac_header(skb);
 
+#ifdef CONFIG_KLAT
+	/* packet capture for MBIM device */
+	mif_queue_skb(skb, RX);
+
+	/* klat */
+	klat_rx(skb, skbpriv(skb)->sipc_ch - SIPC_CH_ID_PDP_0);
+#endif
 	if (in_interrupt())
 		ret = netif_rx(skb);
 	else
@@ -754,13 +762,13 @@ static long misc_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		char *buff = iod->msd->cp_crash_info + strlen(CP_CRASH_TAG);
 		void __user *user_buff = (void __user *)arg;
 
-		mif_err("%s: ERR! IOCTL_MODEM_CP_UPLOAD\n", iod->name);
+		mif_err("%s: IOCTL_MODEM_CP_UPLOAD\n", iod->name);
 		strcpy(iod->msd->cp_crash_info, CP_CRASH_TAG);
 		if (arg) {
 			if (copy_from_user(buff, user_buff, CP_CRASH_INFO_SIZE))
 				return -EFAULT;
 		}
-		panic(iod->msd->cp_crash_info);
+		panic("%s", iod->msd->cp_crash_info);
 		return 0;
 	}
 
@@ -829,6 +837,14 @@ static long misc_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			return ld->security_req(ld, iod, arg);
 		}
 		mif_err("%s: !ld->check_security\n", iod->name);
+		return -EINVAL;
+
+	case IOCTL_MODEM_CRASH_REASON:
+		if (ld->crash_reason) {
+			mif_info("%s: IOCTL_MODEM_CRASH_REASON\n", iod->name);
+			return ld->crash_reason(ld, iod, arg);
+		}
+		mif_err("%s: !ld->crash_reason\n", iod->name);
 		return -EINVAL;
 
 	default:

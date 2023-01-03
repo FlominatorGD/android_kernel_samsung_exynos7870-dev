@@ -4,6 +4,7 @@
 
 # Features to Enable
 PED_ENABLE=true
+PED_BASED_ON_TGID_ENABLE=true
 SAFEPLACE_ENABLE=true
 IMMUTABLE_ENABLE=true
 LP_ENABLE=true
