@@ -2798,7 +2798,21 @@ static void sec_ts_reset_work(struct work_struct *work)
 			sec_ts_stop_device(ts);
 		}
 
-		if ((ts->lowpower_mode & SEC_TS_MODE_SPONGE_AOD) && ts->use_sponge) {
+   /* This functionality is only useful for samsung stock roms which
+    * supports samsung specific accessories which may need gesture input
+    * only on certain portion of the screen.
+    * Since we use only dt2w to wake the screen  and we want it to be
+    * active on the whole panel stop clearing the rectangle which defines
+    * the gesture input area every time screen is powered on and off.
+    *
+    * This simplify A LOT the logic needed to enable dt2w on AOSP ROMs
+    * and custom kernel, as instead of hacking in kernel a new sysfs to
+    * only enable dt2w or instead of implementing cumbersome logic in
+    * power hal to redraw the input rectangle every time the screen in
+    * powered on and off let us doing that only once.
+    */
+
+		/*if ((ts->lowpower_mode & SEC_TS_MODE_SPONGE_AOD) && ts->use_sponge) {
 			int i, ret;
 			u8 data[10] = {0x02, 0};
 
@@ -2816,7 +2830,7 @@ static void sec_ts_reset_work(struct work_struct *work)
 			if (ret < 0)
 				input_err(true, &ts->client->dev, "%s: Failed to send notify\n", __func__);
 			enable_irq(ts->client->irq);
-		}
+		}*/
 	}
 
 	ts->reset_is_on_going = false;
