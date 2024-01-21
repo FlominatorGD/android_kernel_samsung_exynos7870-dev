@@ -291,7 +291,9 @@ static void simulate_LOMEM(char *arg)
 static void simulate_SOFT_LOCKUP(char *arg)
 {
 	pr_crit("%s()\n", __func__);
+#ifdef CONFIG_BOOTPARAM_SOFTLOCKUP_PANIC
 	softlockup_panic = 1;
+#endif
 	preempt_disable();
 	asm("b .");
 	preempt_enable();

@@ -614,8 +614,9 @@ static ssize_t reset_enabled_store(struct kobject *kobj,
 		return -EINVAL;
 
 	reset_enabled = !!val;
+#ifdef CONFIG_SEC_PM_DEBUG
 	pmic_reset_enabled(reset_enabled);
-
+#endif
 	pr_info("%s (%d)\n", __func__, reset_enabled);
 	return n;
 }

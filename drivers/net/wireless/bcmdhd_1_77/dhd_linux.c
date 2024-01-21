@@ -18438,6 +18438,7 @@ argos_register_notifier_init(struct net_device *net)
 	argos_config_mumimo_init(net);
 #endif /* DYNAMIC_MUMIMO_CONTROL */
 
+#ifdef CONFIG_ARGOS
 	if (argos_wifi.notifier_call == NULL) {
 		argos_wifi.notifier_call = argos_status_notifier_wifi_cb;
 		ret = sec_argos_register_notifier(&argos_wifi, ARGOS_WIFI_TABLE_LABEL);
@@ -18446,7 +18447,7 @@ argos_register_notifier_init(struct net_device *net)
 			goto exit;
 		}
 	}
-
+#endif
 #if defined(CONFIG_SPLIT_ARGOS_SET) && defined(DYNAMIC_MUMIMO_CONTROL)
 	if (argos_mimo.notifier_call == NULL) {
 		argos_mimo.notifier_call = argos_status_notifier_config_mumimo_cb;
@@ -18459,6 +18460,7 @@ argos_register_notifier_init(struct net_device *net)
 	}
 #endif /* CONFIG_SPLIT_ARGOS_SET && DYNAMIC_MUMIMO_CONTROL */
 
+#ifdef CONFIG_ARGOS
 	if (argos_p2p.notifier_call == NULL) {
 		argos_p2p.notifier_call = argos_status_notifier_p2p_cb;
 		ret = sec_argos_register_notifier(&argos_p2p, ARGOS_P2P_TABLE_LABEL);
@@ -18471,6 +18473,7 @@ argos_register_notifier_init(struct net_device *net)
 			goto exit;
 		}
 	}
+#endif
 
 	return 0;
 
@@ -18511,7 +18514,9 @@ argos_register_notifier_deinit(void)
 #endif /* !DHD_LB && ARGOS_RPS_CPU_CTL */
 
 	if (argos_p2p.notifier_call) {
+#if defined ARGOS_CPU_SCHEDULER && defined CONFIG_ARGOS
 		sec_argos_unregister_notifier(&argos_p2p, ARGOS_P2P_TABLE_LABEL);
+#endif
 		argos_p2p.notifier_call = NULL;
 	}
 
@@ -18523,7 +18528,9 @@ argos_register_notifier_deinit(void)
 #endif /* CONFIG_SPLIT_ARGOS_SET && DYNAMIC_MUMIMO_CONTROL */
 
 	if (argos_wifi.notifier_call) {
+#if defined ARGOS_CPU_SCHEDULER && defined CONFIG_ARGOS
 		sec_argos_unregister_notifier(&argos_wifi, ARGOS_WIFI_TABLE_LABEL);
+#endif
 		argos_wifi.notifier_call = NULL;
 	}
 

@@ -410,6 +410,7 @@ static const char *sync_status_str(int status)
 	return "error";
 }
 
+#ifdef CONFIG_DECON_EVENT_LOG
 static void decon_abd_print_fto(struct seq_file *m, struct abd_trace *trace)
 {
 	struct timeval tv;
@@ -429,6 +430,7 @@ static void decon_abd_print_fto(struct seq_file *m, struct abd_trace *trace)
 			(unsigned long)tv.tv_sec, tv.tv_usec, log->winid, log->fence.name, sync_status_str(atomic_read(&log->fence.status)));
 	}
 }
+#endif
 
 static void decon_abd_print_ss_log(struct seq_file *m)
 {
@@ -452,8 +454,14 @@ static void decon_abd_print_ss_log(struct seq_file *m)
 		abd_printf(m, "%lu.%06lu %11u, ", (unsigned long)tv.tv_sec, tv.tv_usec, log->type);
 	}
 
+<<<<<<< HEAD
 	abd_printf(m, "\n");
+=======
+	seq_puts(m, "\n");
+	return 0;
+>>>>>>> 7b9f9041f6c (treewide: Fix build)
 }
+#endif
 
 static void decon_abd_print_str(struct seq_file *m)
 {
@@ -520,6 +528,7 @@ static int decon_abd_show(struct seq_file *m, void *unused)
 	abd_printf(m, "==========_DECON_ABD_==========\n");
 	abd_printf(m, "isync: %d, lcdconnected: %d, lcdtype: %6X\n", decon->ignore_vsync, dsim->priv.lcdconnected, lcdtype);
 
+<<<<<<< HEAD
 	for (i = 0; i < ABD_PIN_MAX; i++) {
 		if (abd->pin[i].p_first.count) {
 			abd_printf(m, "==========_PIN_DEBUG_==========\n");
@@ -546,6 +555,17 @@ static int decon_abd_show(struct seq_file *m, void *unused)
 
 	abd_printf(m, "==========_RAM_DEBUG_==========\n");
 	decon_abd_print_ss_log(m);
+=======
+#ifdef CONFIG_DECON_EVENT_LOG
+	seq_printf(m, "========== FTO DEBUG ==========\n");
+	decon_debug_fto_print(m, &abd->f_first);
+	decon_debug_fto_print(m, &abd->f_lcdon);
+	decon_debug_fto_print(m, &abd->f_event);
+
+	seq_printf(m, "===============================\n");
+	decon_debug_ss_log_print(m);
+#endif
+>>>>>>> 7b9f9041f6c (treewide: Fix build)
 
 	return 0;
 }
