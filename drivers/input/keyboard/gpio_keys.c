@@ -580,6 +580,12 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 		break;
 	case KEY_HOMEPAGE:
 		printk(KERN_INFO "[sec_input] HOME key is %s\n", !!state ? "pressed" : "released");
+		if (state) {
+			input_report_key(input, KEY_WAKEUP, 1);
+			input_sync(input);
+			input_report_key(input, KEY_WAKEUP, 0);
+			input_sync(input);
+		}
 		break;
 	case KEY_VOLUMEUP:
 		printk(KERN_INFO "[sec_input] VolumeUp key is %s\n", !!state ? "pressed" : "released");
