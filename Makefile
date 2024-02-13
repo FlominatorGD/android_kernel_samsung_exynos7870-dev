@@ -692,14 +692,7 @@ else
 endif
 endif
 
-ifneq ($(CC),)
-ifeq ($(shell $(CC) -v 2>&1 | grep -c "clang version"), 1)
-COMPILER := clang
-else
-COMPILER := gcc
-endif
-export COMPILER
-endif
+ifeq ($(cc-name),clang)
 
 KBUILD_CFLAGS += $(stackp-flag)
 
