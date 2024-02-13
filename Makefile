@@ -304,7 +304,7 @@ HOSTCFLAGS  += -Wno-unused-value -Wno-unused-parameter \
 		-Wno-missing-field-initializers -fno-delete-null-pointer-checks
 endif
 
-# Decide whether to build built-in, modular, or both.
+# Decide whether to build built-in, modular, or both. 
 # Normally, just do built-in.
 
 KBUILD_MODULES :=
