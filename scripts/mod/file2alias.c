@@ -1032,24 +1032,7 @@ static int do_amba_entry(const char *filename,
 	return 1;
 }
 
-<<<<<<< HEAD
-=======
-/*
- * looks like: "mipscdmm:tN"
- *
- * N is exactly 2 digits, where each is an upper-case hex digit, or
- *	a ? or [] pattern matching exactly one digit.
- */
-static int do_mips_cdmm_entry(const char *filename,
-			      void *symval, char *alias)
-{
-	DEF_FIELD(symval, mips_cdmm_device_id, type);
 
-	sprintf(alias, "mipscdmm:t%02X*", type);
-	return 1;
-}
-
->>>>>>> 9f0916a3259e (modpost: file2alias: go back to simple devtable lookup)
 /* LOOKS like cpu:type:x86,venVVVVfamFFFFmodMMMM:feature:*,FEAT,*
  * All fields are numbers. It would be nicer to use strings for vendor
  * and feature, but getting those out of the build system here is too
@@ -1110,46 +1093,6 @@ static int do_rio_entry(const char *filename,
 	ADD(alias, "ad", asm_did != RIO_ANY_ID, asm_did);
 
 	add_wildcard(alias);
-	return 1;
-}
-
-
-/* Looks like: ulpi:vNpN */
-static int do_ulpi_entry(const char *filename, void *symval,
-			 char *alias)
-{
-	DEF_FIELD(symval, ulpi_device_id, vendor);
-	DEF_FIELD(symval, ulpi_device_id, product);
-
-	sprintf(alias, "ulpi:v%04xp%04x", vendor, product);
-
-	return 1;
-}
-
-/* Looks like: hdaudio:vNrNaN */
-static int do_hda_entry(const char *filename, void *symval, char *alias)
-{
-	DEF_FIELD(symval, hda_device_id, vendor_id);
-	DEF_FIELD(symval, hda_device_id, rev_id);
-	DEF_FIELD(symval, hda_device_id, api_version);
-
-	strcpy(alias, "hdaudio:");
-	ADD(alias, "v", vendor_id != 0, vendor_id);
-	ADD(alias, "r", rev_id != 0, rev_id);
-	ADD(alias, "a", api_version != 0, api_version);
-
-	add_wildcard(alias);
-	return 1;
-}
-
-/* Looks like: fsl-mc:vNdN */
-static int do_fsl_mc_entry(const char *filename, void *symval,
-			   char *alias)
-{
-	DEF_FIELD(symval, fsl_mc_device_id, vendor);
-	DEF_FIELD_ADDR(symval, fsl_mc_device_id, obj_type);
-
-	sprintf(alias, "fsl-mc:v%08Xd%s", vendor, *obj_type);
 	return 1;
 }
 
