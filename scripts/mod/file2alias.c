@@ -606,7 +606,6 @@ static int do_of_entry (const char *filename, void *symval, char *alias)
 	add_wildcard(alias);
 	return 1;
 }
-ADD_TO_DEVTABLE("of", of_device_id, do_of_entry);
 
 static int do_vio_entry(const char *filename, void *symval,
 		char *alias)
