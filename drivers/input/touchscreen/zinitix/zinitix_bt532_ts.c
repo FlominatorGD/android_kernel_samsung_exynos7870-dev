@@ -703,7 +703,7 @@ struct bt532_ts_info {
 #ifdef CONFIG_VBUS_NOTIFIER
 	struct notifier_block vbus_nb;
 #endif
-};
+};z
 /* Dummy touchkey code */
 #define KEY_DUMMY_HOME1	249
 #define KEY_DUMMY_HOME2	250
