@@ -268,7 +268,7 @@ int ist30xx_set_input_device(struct ist30xx_data *data)
 			set_bit(ist30xx_key_code[i], data->input_dev->keybit);
 	}
 #endif
-	input_set_capability(data->input_dev, EV_KEY, KEY_BLACK_UI_GESTURE);
+    input_set_capability(data->input_dev, EV_KEY, KEY_WAKEUP);
 	input_set_capability(data->input_dev, EV_KEY, KEY_MUTE);
 	input_set_capability(data->input_dev, EV_KEY, KEY_SYSRQ);
 
@@ -357,9 +357,9 @@ void ist30xx_special_cmd(struct ist30xx_data *data, int cmd)
 		data->scrub_x = 0;
 		data->scrub_y = 0;
 		
-		input_report_key(data->input_dev, KEY_BLACK_UI_GESTURE, 1);
+		input_report_key(data->input_dev, KEY_WAKEUP, 1);
 		input_sync(data->input_dev);
-		input_report_key(data->input_dev, KEY_BLACK_UI_GESTURE, 0);
+		input_report_key(data->input_dev, KEY_WAKEUP, 0);
 		input_sync(data->input_dev);
 	} else if (data->g_reg.b.evt & IST30XX_GETURE_EVT_AOD) {
 		tsp_noti("AOD Trigger~ (%d, %d)\n", data->g_reg.b.evt_x,
@@ -372,9 +372,9 @@ void ist30xx_special_cmd(struct ist30xx_data *data, int cmd)
 		data->scrub_x = data->g_reg.b.evt_x;
 		data->scrub_y = data->g_reg.b.evt_y;
 
-		input_report_key(data->input_dev, KEY_BLACK_UI_GESTURE, 1);
+		input_report_key(data->input_dev, KEY_WAKEUP, 1);
 		input_sync(data->input_dev);
-		input_report_key(data->input_dev, KEY_BLACK_UI_GESTURE, 0);
+		input_report_key(data->input_dev, KEY_WAKEUP, 0);
 		input_sync(data->input_dev);
 	}
 
