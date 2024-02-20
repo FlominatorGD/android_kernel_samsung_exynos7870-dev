@@ -575,6 +575,12 @@ typedef union {
 #ifdef CONFIG_HAS_EARLYSUSPEND
 #include <linux/earlysuspend.h>
 #endif
+
+#ifdef CONFIG_FB
+#include <linux/notifier.h>
+#include <linux/fb.h>
+#endif
+
 struct ist30xx_dt_data {
 	int irq_gpio;
 	const char *regulator_avdd;
@@ -666,6 +672,10 @@ struct ist30xx_data {
 	u32 debugging_noise;
 	u32 t_frame[2];
 	struct delayed_work work_reset_check;
+#ifdef CONFIG_FB
+	struct notifier_block fb_notif;
+#endif
+
 #ifdef IST30XX_NOISE_MODE
 	struct delayed_work work_noise_protect;
 #else
@@ -775,6 +785,11 @@ int ist30xx_read_sec_info(struct ist30xx_data *data, u8 idx, u32 *buf32, int len
 #ifdef CONFIG_TRUSTONIC_TRUSTED_UI
 extern void trustedui_mode_on(void);
 extern void trustedui_mode_off(void);
+#endif
+
+#ifdef CONFIG_FB
+int fb_notifier_callback(struct notifier_block *self,
+				unsigned long event, void *data);
 #endif
 
 #endif  /* __IST30XXH_H__ */

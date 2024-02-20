@@ -1874,6 +1874,12 @@ static int ist30xx_probe(struct i2c_client *client,
 						VBUS_NOTIFY_DEV_CHARGER);
 #endif
 
+#ifdef CONFIG_FB
+	data->fb_notif.notifier_call = fb_notifier_callback;
+	if (fb_register_client(&data->fb_notif))
+		pr_err("%s: could not create fb notifier\n", __func__);
+#endif
+
 	device_init_wakeup(&client->dev, true);
 
 	ist30xx_start(data);
@@ -1915,6 +1921,11 @@ err_pinctrl:
 #ifdef CONFIG_OF
 err_alloc_dev:
 #endif
+
+#ifdef CONFIG_FB
+	fb_unregister_client(&data->fb_notif);
+#endif
+
 	kfree(data);
 	tsp_err("Error, ist30xx init driver\n");
 	return -ENODEV;
@@ -1972,6 +1983,40 @@ static void ist30xx_shutdown(struct i2c_client *client)
 	clear_input_data(data);
 	mutex_unlock(&data->lock);
 }
+
+#ifdef CONFIG_FB
+int fb_notifier_callback(struct notifier_block *self,
+				unsigned long event, void *data)
+{
+	struct fb_event *evdata = data;
+	struct ist30xx_data *tc_data = container_of(self, struct ist30xx_data, fb_notif);
+
+	if (evdata && evdata->data && event == FB_EVENT_BLANK) {
+		int *blank = evdata->data;
+		switch (*blank) {
+		case FB_BLANK_UNBLANK:
+		case FB_BLANK_NORMAL:
+		case FB_BLANK_VSYNC_SUSPEND:
+		case FB_BLANK_HSYNC_SUSPEND:
+		        ist30xx_ts_open(tc_data->input_dev);
+			break;
+		case FB_BLANK_POWERDOWN:
+		#ifdef CONFIG_TOUCHSCREEN_DOUBLETAP2WAKE
+			if(!dt2w_is_enabled()){
+				ist30xx_ts_close(tc_data->input_dev);
+				break;
+			}
+		#endif	
+		default:
+			/* Don't handle what we don't understand */
+			break;
+		}
+	}
+
+	return 0;
+}
+#endif
+
 
 static struct i2c_device_id ist30xx_idtable[] = {
 	{ IST30XX_DEV_NAME, 0 },
