@@ -3117,6 +3117,7 @@ static DEVICE_ATTR(touchkey_threshold, S_IRUGO, touchkey_threshold_show, NULL);
 /* sysfs - tsp */
 static DEVICE_ATTR(close_tsp_test, S_IRUGO, show_close_tsp_test, NULL);
 static DEVICE_ATTR(cmd, S_IWUSR | S_IWGRP, NULL, store_cmd);
+static DEVICE_ATTR(cmd2, S_IWUSR | S_IWGRP, NULL, store_cmd);
 static DEVICE_ATTR(cmd_status, S_IRUGO, show_cmd_status, NULL);
 static DEVICE_ATTR(cmd_result, S_IRUGO, show_cmd_result, NULL);
 static DEVICE_ATTR(cmd_list, S_IRUGO, show_cmd_list, NULL);
@@ -3141,6 +3142,7 @@ static struct attribute *sec_tkey_attributes[] = {
 static struct attribute *sec_touch_facotry_attributes[] = {
     &dev_attr_close_tsp_test.attr,
     &dev_attr_cmd.attr,
+    &dev_attr_cmd2.attr,
     &dev_attr_cmd_status.attr,
     &dev_attr_cmd_result.attr,
     &dev_attr_cmd_list.attr,
