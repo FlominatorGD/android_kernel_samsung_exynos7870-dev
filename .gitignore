@@ -98,6 +98,9 @@ x509.genkey
 # Kconfig presets
 all.config
 
+# fetched Android config fragments
+android/configs/android-*.cfg
+
 # Gator Daemon files
 tools/gator/daemon/defaults_xml.h
 tools/gator/daemon/escape
