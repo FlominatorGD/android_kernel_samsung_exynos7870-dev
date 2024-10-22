@@ -699,8 +699,7 @@ static int smack_bprm_set_creds(struct linux_binprm *bprm)
 
 		if (rc != 0)
 			return rc;
-	}
-	if (bprm->unsafe & ~LSM_UNSAFE_PTRACE)
+	} else if (bprm->unsafe)
 		return -EPERM;
 
 	bsp->smk_task = isp->smk_task;
