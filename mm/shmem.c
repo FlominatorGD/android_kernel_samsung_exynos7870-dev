@@ -911,6 +911,10 @@ static struct page *shmem_alloc_page(gfp_t gfp,
 	pvma.vm_policy = mpol_shared_policy_lookup(&info->policy, index);
 
 	page = alloc_page_vma(gfp, &pvma, 0);
+	if (page && is_cma_pageblock(page)) {
+		 __free_page(page);
+		 page = alloc_pages(gfp & ~__GFP_MOVABLE, 0);
+	}
 
 	/* Drop reference taken by mpol_shared_policy_lookup() */
 	mpol_cond_put(pvma.vm_policy);
@@ -1538,7 +1542,7 @@ static ssize_t shmem_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	 * holes of a sparse file, we actually need to allocate those pages,
 	 * and even mark them dirty, so it cannot exceed the max_blocks limit.
 	 */
-	if (!iter_is_iovec(to))
+	if (segment_eq(get_fs(), KERNEL_DS))
 		sgp = SGP_DIRTY;
 
 	index = *ppos >> PAGE_CACHE_SHIFT;
