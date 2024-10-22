@@ -2894,10 +2894,8 @@ static int ibmvfc_slave_configure(struct scsi_device *sdev)
 	unsigned long flags = 0;
 
 	spin_lock_irqsave(shost->host_lock, flags);
-	if (sdev->type == TYPE_DISK) {
+	if (sdev->type == TYPE_DISK)
 		sdev->allow_restart = 1;
-		blk_queue_rq_timeout(sdev->request_queue, 120 * HZ);
-	}
 
 	if (sdev->tagged_supported) {
 		scsi_set_tag_type(sdev, MSG_SIMPLE_TAG);
@@ -4837,7 +4835,6 @@ static int ibmvfc_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 	if (IS_ERR(vhost->work_thread)) {
 		dev_err(dev, "Couldn't create kernel thread: %ld\n",
 			PTR_ERR(vhost->work_thread));
-		rc = PTR_ERR(vhost->work_thread);
 		goto free_host_mem;
 	}
 
