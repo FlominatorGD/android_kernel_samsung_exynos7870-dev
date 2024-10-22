@@ -13,6 +13,7 @@
 *.o
 *.o.*
 *.a
+*.bin
 *.s
 *.ko
 *.so
@@ -23,7 +24,6 @@
 *.symtypes
 *.order
 *.elf
-*.bin
 *.gz
 *.bz2
 *.lzma
@@ -32,14 +32,13 @@
 *.lzo
 *.patch
 *.gcno
-*.ll
-modules.builtin
 Module.symvers
 *.dwo
 
 #
 # Top-level generic files
 #
+build_kernel.sh
 /tags
 /TAGS
 /linux
@@ -47,6 +46,7 @@ Module.symvers
 /vmlinuz
 /System.map
 /Module.markers
+/out
 
 #
 # Debian directory (make deb-pkg)
@@ -100,3 +100,9 @@ all.config
 
 # fetched Android config fragments
 android/configs/android-*.cfg
+
+# Gator Daemon files
+tools/gator/daemon/defaults_xml.h
+tools/gator/daemon/escape
+tools/gator/daemon/events.xml
+tools/gator/daemon/events_xml.h
