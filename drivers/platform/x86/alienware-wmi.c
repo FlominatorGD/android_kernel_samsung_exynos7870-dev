@@ -465,7 +465,6 @@ static acpi_status alienware_hdmi_command(struct hdmi_args *in_args,
 		status = wmi_evaluate_method(WMAX_CONTROL_GUID, 1,
 					     command, &input, NULL);
 	}
-	kfree(output.pointer);
 	return status;
 }
 
