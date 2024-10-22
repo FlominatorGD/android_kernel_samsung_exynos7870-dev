@@ -1696,7 +1696,7 @@ static const struct inode_operations ceph_symlink_iops = {
 /*
  * setattr
  */
-int __ceph_setattr(struct dentry *dentry, struct iattr *attr)
+int ceph_setattr(struct dentry *dentry, struct iattr *attr)
 {
 	struct inode *inode = dentry->d_inode;
 	struct ceph_inode_info *ci = ceph_inode(inode);
@@ -1875,6 +1875,11 @@ int __ceph_setattr(struct dentry *dentry, struct iattr *attr)
 	if (inode_dirty_flags)
 		__mark_inode_dirty(inode, inode_dirty_flags);
 
+	if (ia_valid & ATTR_MODE) {
+		err = posix_acl_chmod(inode, attr->ia_mode);
+		if (err)
+			goto out_put;
+	}
 
 	if (mask) {
 		req->r_inode = inode;
@@ -1888,22 +1893,11 @@ int __ceph_setattr(struct dentry *dentry, struct iattr *attr)
 	     ceph_cap_string(dirtied), mask);
 
 	ceph_mdsc_put_request(req);
-
-	if (err >= 0 && (mask & CEPH_SETATTR_SIZE))
+	if (mask & CEPH_SETATTR_SIZE)
 		__ceph_do_pending_vmtruncate(inode);
-
 	return err;
-}
-
-int ceph_setattr(struct dentry *dentry, struct iattr *attr)
-{
-	int err;
-
-	err = __ceph_setattr(dentry, attr);
-
-	if (err >= 0 && (attr->ia_valid & ATTR_MODE))
-		err = posix_acl_chmod(d_inode(dentry), attr->ia_mode);
-
+out_put:
+	ceph_mdsc_put_request(req);
 	return err;
 }
 
