@@ -86,7 +86,11 @@ efi_head:
 	.quad	_kernel_size_le			// Effective size of kernel image, little-endian
 	.quad	_kernel_flags_le		// Informative flags, little-endian
 	.quad	0				// reserved
-	.quad	0				// reserved
+#ifdef CONFIG_PROCA
+	.quad	_proca_conf_offset		// memory info for proca ta
+#else
+	.quad	0xecefecef			// Magic number for proca ta
+#endif
 	.quad	0				// reserved
 	.byte	0x41				// Magic number, "ARM\x64"
 	.byte	0x52
@@ -456,8 +460,7 @@ __mmap_switched:
 	bl	__pi_memset
 	dsb	ishst				// Make zero page visible to PTW
 
-	adrp	x4, initial_sp
-	add	sp, x4, :lo12:initial_sp
+	adr_l	sp, initial_sp, x4
 	mov	x4, sp
 	and	x4, x4, #~(THREAD_SIZE - 1)
 	msr	sp_el0, x4			// Save thread_info
