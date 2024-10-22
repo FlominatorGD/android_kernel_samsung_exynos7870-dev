@@ -768,7 +768,7 @@ irq_thread_check_affinity(struct irq_desc *desc, struct irqaction *action)
 	 * This code is triggered unconditionally. Check the affinity
 	 * mask pointer. For CPU_MASK_OFFSTACK=n this is optimized out.
 	 */
-	if (cpumask_available(desc->irq_data.affinity))
+	if (desc->irq_data.affinity)
 		cpumask_copy(mask, desc->irq_data.affinity);
 	else
 		valid = false;
@@ -795,15 +795,8 @@ irq_forced_thread_fn(struct irq_desc *desc, struct irqaction *action)
 	irqreturn_t ret;
 
 	local_bh_disable();
-	if (!IS_ENABLED(CONFIG_PREEMPT_RT_BASE))
-		local_irq_disable();
 	ret = action->thread_fn(action->irq, action->dev_id);
-	if (ret == IRQ_HANDLED)
-		atomic_inc(&desc->threads_handled);
-
 	irq_finalize_oneshot(desc, action);
-	if (!IS_ENABLED(CONFIG_PREEMPT_RT_BASE))
-		local_irq_enable();
 	local_bh_enable();
 	return ret;
 }
@@ -819,9 +812,6 @@ static irqreturn_t irq_thread_fn(struct irq_desc *desc,
 	irqreturn_t ret;
 
 	ret = action->thread_fn(action->irq, action->dev_id);
-	if (ret == IRQ_HANDLED)
-		atomic_inc(&desc->threads_handled);
-
 	irq_finalize_oneshot(desc, action);
 	return ret;
 }
@@ -887,6 +877,8 @@ static int irq_thread(void *data)
 		irq_thread_check_affinity(desc, action);
 
 		action_ret = handler_fn(desc, action);
+		if (action_ret == IRQ_HANDLED)
+			atomic_inc(&desc->threads_handled);
 
 		wake_threads_waitq(desc);
 	}
@@ -1202,6 +1194,9 @@ __setup_irq(unsigned int irq, struct irq_desc *desc, struct irqaction *new)
 			irq_settings_set_no_balancing(desc);
 			irqd_set(&desc->irq_data, IRQD_NO_BALANCING);
 		}
+
+		if (new->flags & IRQF_GIC_MULTI_TARGET)
+			irqd_set(&desc->irq_data, IRQD_GIC_MULTI_TARGET);
 
 		/* Set default affinity mask once everything is setup */
 		setup_affinity(irq, desc, mask);
