@@ -32,6 +32,7 @@ static struct bio *get_swap_bio(gfp_t gfp_flags,
 	bio = bio_alloc(gfp_flags, 1);
 	if (bio) {
 		bio->bi_iter.bi_sector = map_swap_page(page, &bio->bi_bdev);
+		bio->bi_iter.bi_sector <<= PAGE_SHIFT - 9;
 		bio->bi_io_vec[0].bv_page = page;
 		bio->bi_io_vec[0].bv_len = PAGE_SIZE;
 		bio->bi_io_vec[0].bv_offset = 0;
@@ -58,10 +59,12 @@ void end_swap_bio_write(struct bio *bio, int err)
 		 * Also clear PG_reclaim to avoid rotate_reclaimable_page()
 		 */
 		set_page_dirty(page);
+#ifndef CONFIG_VNSWAP
 		printk(KERN_ALERT "Write-error on swap-device (%u:%u:%Lu)\n",
 				imajor(bio->bi_bdev->bd_inode),
 				iminor(bio->bi_bdev->bd_inode),
 				(unsigned long long)bio->bi_iter.bi_sector);
+#endif
 		ClearPageReclaim(page);
 	}
 	end_page_writeback(page);
@@ -242,9 +245,20 @@ int swap_writepage(struct page *page, struct writeback_control *wbc)
 		end_page_writeback(page);
 		goto out;
 	}
+#ifdef CONFIG_VNSWAP
+	set_page_dirty(page);
+	ClearPageReclaim(page);
+	unlock_page(page);
+#else
 	ret = __swap_writepage(page, wbc, end_swap_bio_write);
+#endif
 out:
 	return ret;
+}
+
+static sector_t swap_page_sector(struct page *page)
+{
+	return (sector_t)__page_file_index(page) << (PAGE_CACHE_SHIFT - 9);
 }
 
 int __swap_writepage(struct page *page, struct writeback_control *wbc,
@@ -303,8 +317,7 @@ int __swap_writepage(struct page *page, struct writeback_control *wbc,
 		return ret;
 	}
 
-	ret = bdev_write_page(sis->bdev, map_swap_page(page, &sis->bdev),
-			      page, wbc);
+	ret = bdev_write_page(sis->bdev, swap_page_sector(page), page, wbc);
 	if (!ret) {
 		count_vm_event(PSWPOUT);
 		return 0;
@@ -352,7 +365,7 @@ int swap_readpage(struct page *page)
 		return ret;
 	}
 
-	ret = bdev_read_page(sis->bdev, map_swap_page(page, &sis->bdev), page);
+	ret = bdev_read_page(sis->bdev, swap_page_sector(page), page);
 	if (!ret) {
 		count_vm_event(PSWPIN);
 		return 0;
