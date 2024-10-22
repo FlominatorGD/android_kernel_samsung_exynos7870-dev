@@ -1835,19 +1835,6 @@ int ubi_thread(void *u)
 		    !ubi->thread_enabled || ubi_dbg_is_bgt_disabled(ubi)) {
 			set_current_state(TASK_INTERRUPTIBLE);
 			spin_unlock(&ubi->wl_lock);
-
-			/*
-			 * Check kthread_should_stop() after we set the task
-			 * state to guarantee that we either see the stop bit
-			 * and exit or the task state is reset to runnable such
-			 * that it's not scheduled out indefinitely and detects
-			 * the stop bit at kthread_should_stop().
-			 */
-			if (kthread_should_stop()) {
-				set_current_state(TASK_RUNNING);
-				break;
-			}
-
 			schedule();
 			continue;
 		}
@@ -1875,7 +1862,6 @@ int ubi_thread(void *u)
 	}
 
 	dbg_wl("background thread \"%s\" is killed", ubi->bgt_name);
-	ubi->thread_enabled = 0;
 	return 0;
 }
 
@@ -1957,10 +1943,8 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 		cond_resched();
 
 		e = kmem_cache_alloc(ubi_wl_entry_slab, GFP_KERNEL);
-		if (!e) {
-			err = -ENOMEM;
+		if (!e)
 			goto out_free;
-		}
 
 		e->pnum = aeb->pnum;
 		e->ec = aeb->ec;
@@ -1980,10 +1964,8 @@ int ubi_wl_init(struct ubi_device *ubi, struct ubi_attach_info *ai)
 			cond_resched();
 
 			e = kmem_cache_alloc(ubi_wl_entry_slab, GFP_KERNEL);
-			if (!e) {
-				err = -ENOMEM;
+			if (!e)
 				goto out_free;
-			}
 
 			e->pnum = aeb->pnum;
 			e->ec = aeb->ec;
