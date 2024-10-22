@@ -28,6 +28,10 @@
 #include <linux/netdevice.h>
 #include <linux/sysfs.h>
 
+#ifdef CONFIG_ARCH_EXYNOS
+#include <soc/samsung/exynos-cpu_hotplug.h>
+#endif
+
 #include "base.h"
 #include "power/power.h"
 
@@ -427,10 +431,11 @@ static DEVICE_ATTR_RW(uevent);
 static ssize_t online_show(struct device *dev, struct device_attribute *attr,
 			   char *buf)
 {
+	struct cpu *cpu = container_of(dev, struct cpu, dev);
 	bool val;
 
 	device_lock(dev);
-	val = !dev->offline;
+	val = !!cpu_online(cpu->dev.id);
 	device_unlock(dev);
 	return sprintf(buf, "%u\n", val);
 }
@@ -440,6 +445,11 @@ static ssize_t online_store(struct device *dev, struct device_attribute *attr,
 {
 	bool val;
 	int ret;
+
+#ifdef CONFIG_ARCH_EXYNOS
+	if (exynos_cpu_hotplug_enabled())
+		return count;
+#endif
 
 	ret = strtobool(buf, &val);
 	if (ret < 0)
@@ -710,7 +720,7 @@ class_dir_create_and_add(struct class *class, struct kobject *parent_kobj)
 
 	dir = kzalloc(sizeof(*dir), GFP_KERNEL);
 	if (!dir)
-		return ERR_PTR(-ENOMEM);
+		return NULL;
 
 	dir->class = class;
 	kobject_init(&dir->kobj, &class_dir_ktype);
@@ -720,7 +730,7 @@ class_dir_create_and_add(struct class *class, struct kobject *parent_kobj)
 	retval = kobject_add(&dir->kobj, parent_kobj, "%s", class->name);
 	if (retval < 0) {
 		kobject_put(&dir->kobj);
-		return ERR_PTR(retval);
+		return NULL;
 	}
 	return &dir->kobj;
 }
@@ -813,15 +823,21 @@ static void cleanup_glue_dir(struct device *dev, struct kobject *glue_dir)
 		return;
 
 	mutex_lock(&gdp_mutex);
-	if (!kobject_has_children(glue_dir))
-		kobject_del(glue_dir);
 	kobject_put(glue_dir);
 	mutex_unlock(&gdp_mutex);
 }
 
 static int device_add_class_symlinks(struct device *dev)
 {
+	struct device_node *of_node = dev_of_node(dev);
 	int error;
+
+	if (of_node) {
+		error = sysfs_create_link(&dev->kobj, &of_node->kobj,"of_node");
+		if (error)
+			dev_warn(dev, "Error %d creating of_node link\n",error);
+		/* An error here doesn't warrant bringing down the device */
+	}
 
 	if (!dev->class)
 		return 0;
@@ -830,7 +846,7 @@ static int device_add_class_symlinks(struct device *dev)
 				  &dev->class->p->subsys.kobj,
 				  "subsystem");
 	if (error)
-		goto out;
+		goto out_devnode;
 
 	if (dev->parent && device_is_not_partition(dev)) {
 		error = sysfs_create_link(&dev->kobj, &dev->parent->kobj,
@@ -858,12 +874,16 @@ out_device:
 
 out_subsys:
 	sysfs_remove_link(&dev->kobj, "subsystem");
-out:
+out_devnode:
+	sysfs_remove_link(&dev->kobj, "of_node");
 	return error;
 }
 
 static void device_remove_class_symlinks(struct device *dev)
 {
+	if (dev_of_node(dev))
+		sysfs_remove_link(&dev->kobj, "of_node");
+
 	if (!dev->class)
 		return;
 
@@ -1017,10 +1037,6 @@ int device_add(struct device *dev)
 
 	parent = get_device(dev->parent);
 	kobj = get_device_parent(dev, parent);
-	if (IS_ERR(kobj)) {
-		error = PTR_ERR(kobj);
-		goto parent_error;
-	}
 	if (kobj)
 		dev->kobj.parent = kobj;
 
@@ -1121,7 +1137,6 @@ done:
 	kobject_del(&dev->kobj);
  Error:
 	cleanup_glue_dir(dev, glue_dir);
-parent_error:
 	if (parent)
 		put_device(parent);
 name_error:
@@ -1421,13 +1436,14 @@ int __init devices_init(void)
 
 static int device_check_offline(struct device *dev, void *not_used)
 {
+	struct cpu *cpu = container_of(dev, struct cpu, dev);
 	int ret;
 
 	ret = device_for_each_child(dev, NULL, device_check_offline);
 	if (ret)
 		return ret;
 
-	return device_supports_offline(dev) && !dev->offline ? -EBUSY : 0;
+	return device_supports_offline(dev) && cpu_online(cpu->dev.id) ? -EBUSY : 0;
 }
 
 /**
@@ -1443,6 +1459,7 @@ static int device_check_offline(struct device *dev, void *not_used)
  */
 int device_offline(struct device *dev)
 {
+	struct cpu *cpu = container_of(dev, struct cpu, dev);
 	int ret;
 
 	if (dev->offline_disabled)
@@ -1454,14 +1471,12 @@ int device_offline(struct device *dev)
 
 	device_lock(dev);
 	if (device_supports_offline(dev)) {
-		if (dev->offline) {
+		if (!cpu_online(cpu->dev.id)) {
 			ret = 1;
 		} else {
 			ret = dev->bus->offline(dev);
-			if (!ret) {
+			if (!ret)
 				kobject_uevent(&dev->kobj, KOBJ_OFFLINE);
-				dev->offline = true;
-			}
 		}
 	}
 	device_unlock(dev);
@@ -1481,16 +1496,15 @@ int device_offline(struct device *dev)
  */
 int device_online(struct device *dev)
 {
+	struct cpu *cpu = container_of(dev, struct cpu, dev);
 	int ret = 0;
 
 	device_lock(dev);
 	if (device_supports_offline(dev)) {
-		if (dev->offline) {
+		if (!cpu_online(cpu->dev.id)) {
 			ret = dev->bus->online(dev);
-			if (!ret) {
+			if (!ret)
 				kobject_uevent(&dev->kobj, KOBJ_ONLINE);
-				dev->offline = false;
-			}
 		} else {
 			ret = 1;
 		}
@@ -1897,11 +1911,6 @@ int device_move(struct device *dev, struct device *new_parent,
 	device_pm_lock();
 	new_parent = get_device(new_parent);
 	new_parent_kobj = get_device_parent(dev, new_parent);
-	if (IS_ERR(new_parent_kobj)) {
-		error = PTR_ERR(new_parent_kobj);
-		put_device(new_parent);
-		goto out;
-	}
 
 	pr_debug("device: '%s': %s: moving to '%s'\n", dev_name(dev),
 		 __func__, new_parent ? dev_name(new_parent) : "<NULL>");
@@ -1952,6 +1961,9 @@ int device_move(struct device *dev, struct device *new_parent,
 		break;
 	case DPM_ORDER_DEV_LAST:
 		device_pm_move_last(dev);
+		break;
+	case DPM_ORDER_DEV_FIRST:
+		device_pm_move_first(dev);
 		break;
 	}
 
@@ -2170,7 +2182,11 @@ EXPORT_SYMBOL(func);
 define_dev_printk_level(dev_emerg, KERN_EMERG);
 define_dev_printk_level(dev_alert, KERN_ALERT);
 define_dev_printk_level(dev_crit, KERN_CRIT);
+#if defined(CONFIG_SEC_BAT_AUT) && !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+define_dev_printk_level(dev_err, BAT_AUTOMAION_TEST_PREFIX_ERR);
+#else
 define_dev_printk_level(dev_err, KERN_ERR);
+#endif
 define_dev_printk_level(dev_warn, KERN_WARNING);
 define_dev_printk_level(dev_notice, KERN_NOTICE);
 define_dev_printk_level(_dev_info, KERN_INFO);
