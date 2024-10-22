@@ -48,6 +48,7 @@
 #include <linux/nodemask.h>
 #include <linux/moduleparam.h>
 #include <linux/uaccess.h>
+#include <linux/exynos-ss.h>
 
 #include "workqueue_internal.h"
 
@@ -1334,6 +1335,7 @@ static void __queue_work(int cpu, struct workqueue_struct *wq,
 	 */
 	WARN_ON_ONCE(!irqs_disabled());
 
+	debug_work_activate(work);
 
 	/* if draining, only works from the same workqueue are allowed */
 	if (unlikely(wq->flags & __WQ_DRAINING) &&
@@ -1412,7 +1414,6 @@ retry:
 		worklist = &pwq->delayed_works;
 	}
 
-	debug_work_activate(work);
 	insert_work(pwq, work, worklist, work_flags);
 
 	spin_unlock(&pwq->pool->lock);
@@ -2049,7 +2050,9 @@ __acquires(&pool->lock)
 	lock_map_acquire_read(&pwq->wq->lockdep_map);
 	lock_map_acquire(&lockdep_map);
 	trace_workqueue_execute_start(work);
+	exynos_ss_work(worker, work, worker->current_func, ESS_FLAG_IN);
 	worker->current_func(work);
+	exynos_ss_work(worker, work, worker->current_func, ESS_FLAG_OUT);
 	/*
 	 * While we must be careful to not use "work" after this, the trace
 	 * point will only record its address.
