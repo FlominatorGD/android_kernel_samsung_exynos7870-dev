@@ -205,6 +205,7 @@ void hv_vss_onchannelcallback(void *context)
 			 */
 
 			vss_transaction.recv_len = recvlen;
+			vss_transaction.recv_channel = channel;
 			vss_transaction.recv_req_id = requestid;
 			vss_transaction.active = true;
 			vss_transaction.msg = (struct hv_vss_msg *)vss_msg;
@@ -270,7 +271,6 @@ hv_vss_init(struct hv_util_service *srv)
 	if (err)
 		return err;
 	recv_buffer = srv->recv_buffer;
-	vss_transaction.recv_channel = srv->channel;
 
 	/*
 	 * When this driver loads, the user level daemon that
