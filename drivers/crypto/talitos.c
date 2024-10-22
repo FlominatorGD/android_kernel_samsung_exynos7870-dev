@@ -335,7 +335,7 @@ DEF_TALITOS_DONE(ch1_3, TALITOS_ISR_CH_1_3_DONE)
 /*
  * locate current (offending) descriptor
  */
-static __be32 current_desc_hdr(struct device *dev, int ch)
+static u32 current_desc_hdr(struct device *dev, int ch)
 {
 	struct talitos_private *priv = dev_get_drvdata(dev);
 	int tail, iter;
@@ -366,13 +366,13 @@ static __be32 current_desc_hdr(struct device *dev, int ch)
 /*
  * user diagnostics; report root cause of error based on execution unit status
  */
-static void report_eu_error(struct device *dev, int ch, __be32 desc_hdr)
+static void report_eu_error(struct device *dev, int ch, u32 desc_hdr)
 {
 	struct talitos_private *priv = dev_get_drvdata(dev);
 	int i;
 
 	if (!desc_hdr)
-		desc_hdr = cpu_to_be32(in_be32(priv->chan[ch].reg + TALITOS_DESCBUF));
+		desc_hdr = in_be32(priv->chan[ch].reg + TALITOS_DESCBUF);
 
 	switch (desc_hdr & DESC_HDR_SEL0_MASK) {
 	case DESC_HDR_SEL0_AFEU:
@@ -1345,18 +1345,6 @@ static int ablkcipher_setkey(struct crypto_ablkcipher *cipher,
 	return 0;
 }
 
-static int ablkcipher_aes_setkey(struct crypto_ablkcipher *cipher,
-				  const u8 *key, unsigned int keylen)
-{
-	if (keylen == AES_KEYSIZE_128 || keylen == AES_KEYSIZE_192 ||
-	    keylen == AES_KEYSIZE_256)
-		return ablkcipher_setkey(cipher, key, keylen);
-
-	crypto_ablkcipher_set_flags(cipher, CRYPTO_TFM_RES_BAD_KEY_LEN);
-
-	return -EINVAL;
-}
-
 static void common_nonsnoop_unmap(struct device *dev,
 				  struct talitos_edesc *edesc,
 				  struct ablkcipher_request *areq)
@@ -1508,14 +1496,6 @@ static int ablkcipher_encrypt(struct ablkcipher_request *areq)
 	struct crypto_ablkcipher *cipher = crypto_ablkcipher_reqtfm(areq);
 	struct talitos_ctx *ctx = crypto_ablkcipher_ctx(cipher);
 	struct talitos_edesc *edesc;
-	unsigned int blocksize =
-			crypto_tfm_alg_blocksize(crypto_ablkcipher_tfm(cipher));
-
-	if (!areq->nbytes)
-		return 0;
-
-	if (areq->nbytes % blocksize)
-		return -EINVAL;
 
 	/* allocate extended descriptor */
 	edesc = ablkcipher_edesc_alloc(areq, true);
@@ -1533,14 +1513,6 @@ static int ablkcipher_decrypt(struct ablkcipher_request *areq)
 	struct crypto_ablkcipher *cipher = crypto_ablkcipher_reqtfm(areq);
 	struct talitos_ctx *ctx = crypto_ablkcipher_ctx(cipher);
 	struct talitos_edesc *edesc;
-	unsigned int blocksize =
-			crypto_tfm_alg_blocksize(crypto_ablkcipher_tfm(cipher));
-
-	if (!areq->nbytes)
-		return 0;
-
-	if (areq->nbytes % blocksize)
-		return -EINVAL;
 
 	/* allocate extended descriptor */
 	edesc = ablkcipher_edesc_alloc(areq, false);
@@ -2252,7 +2224,6 @@ static struct talitos_alg_template driver_algs[] = {
 				.min_keysize = AES_MIN_KEY_SIZE,
 				.max_keysize = AES_MAX_KEY_SIZE,
 				.ivsize = AES_BLOCK_SIZE,
-				.setkey = ablkcipher_aes_setkey,
 			}
 		},
 		.desc_hdr_template = DESC_HDR_TYPE_COMMON_NONSNOOP_NO_AFEU |
@@ -2645,8 +2616,7 @@ static struct talitos_crypto_alg *talitos_alg_alloc(struct device *dev,
 		t_alg->algt.alg.hash.final = ahash_final;
 		t_alg->algt.alg.hash.finup = ahash_finup;
 		t_alg->algt.alg.hash.digest = ahash_digest;
-		if (!strncmp(alg->cra_name, "hmac", 4))
-			t_alg->algt.alg.hash.setkey = ahash_setkey;
+		t_alg->algt.alg.hash.setkey = ahash_setkey;
 		t_alg->algt.alg.hash.import = ahash_import;
 		t_alg->algt.alg.hash.export = ahash_export;
 
