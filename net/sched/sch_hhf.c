@@ -492,9 +492,6 @@ static void hhf_destroy(struct Qdisc *sch)
 		hhf_free(q->hhf_valid_bits[i]);
 	}
 
-	if (!q->hh_flows)
-		return;
-
 	for (i = 0; i < HH_FLOWS_CNT; i++) {
 		struct hh_flow_state *flow, *next;
 		struct list_head *head = &q->hh_flows[i];
@@ -543,7 +540,7 @@ static int hhf_change(struct Qdisc *sch, struct nlattr *opt)
 		new_hhf_non_hh_weight = nla_get_u32(tb[TCA_HHF_NON_HH_WEIGHT]);
 
 	non_hh_quantum = (u64)new_quantum * new_hhf_non_hh_weight;
-	if (non_hh_quantum == 0 || non_hh_quantum > INT_MAX)
+	if (non_hh_quantum > INT_MAX)
 		return -EINVAL;
 
 	sch_tree_lock(sch);
@@ -630,9 +627,7 @@ static int hhf_init(struct Qdisc *sch, struct nlattr *opt)
 			q->hhf_arrays[i] = hhf_zalloc(HHF_ARRAYS_LEN *
 						      sizeof(u32));
 			if (!q->hhf_arrays[i]) {
-				/* Note: hhf_destroy() will be called
-				 * by our caller.
-				 */
+				hhf_destroy(sch);
 				return -ENOMEM;
 			}
 		}
@@ -643,9 +638,7 @@ static int hhf_init(struct Qdisc *sch, struct nlattr *opt)
 			q->hhf_valid_bits[i] = hhf_zalloc(HHF_ARRAYS_LEN /
 							  BITS_PER_BYTE);
 			if (!q->hhf_valid_bits[i]) {
-				/* Note: hhf_destroy() will be called
-				 * by our caller.
-				 */
+				hhf_destroy(sch);
 				return -ENOMEM;
 			}
 		}
