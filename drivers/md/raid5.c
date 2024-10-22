@@ -1736,17 +1736,16 @@ static int grow_one_stripe(struct r5conf *conf, int hash)
 static int grow_stripes(struct r5conf *conf, int num)
 {
 	struct kmem_cache *sc;
-	size_t namelen = sizeof(conf->cache_name[0]);
 	int devs = max(conf->raid_disks, conf->previous_raid_disks);
 	int hash;
 
 	if (conf->mddev->gendisk)
-		snprintf(conf->cache_name[0], namelen,
+		sprintf(conf->cache_name[0],
 			"raid%d-%s", conf->level, mdname(conf->mddev));
 	else
-		snprintf(conf->cache_name[0], namelen,
+		sprintf(conf->cache_name[0],
 			"raid%d-%p", conf->level, conf->mddev);
-	snprintf(conf->cache_name[1], namelen, "%.27s-alt", conf->cache_name[0]);
+	sprintf(conf->cache_name[1], "%s-alt", conf->cache_name[0]);
 
 	conf->active_name = 0;
 	sc = kmem_cache_create(conf->cache_name[conf->active_name],
@@ -1921,9 +1920,6 @@ static int resize_stripes(struct r5conf *conf, int newsize)
 	}
 	put_online_cpus();
 
-	conf->slab_cache = sc;
-	conf->active_name = 1-conf->active_name;
-
 	/* Step 4, return new stripes to service */
 	while(!list_empty(&newstripes)) {
 		nsh = list_entry(newstripes.next, struct stripe_head, lru);
@@ -1941,6 +1937,8 @@ static int resize_stripes(struct r5conf *conf, int newsize)
 	}
 	/* critical section pass, GFP_NOIO no longer needed */
 
+	conf->slab_cache = sc;
+	conf->active_name = 1-conf->active_name;
 	if (!err)
 		conf->pool_size = newsize;
 	return err;
@@ -2936,20 +2934,9 @@ static int fetch_block(struct stripe_head *sh, struct stripe_head_state *s,
 		 */
 		BUG_ON(test_bit(R5_Wantcompute, &dev->flags));
 		BUG_ON(test_bit(R5_Wantread, &dev->flags));
-
-		/*
-		 * In the raid6 case if the only non-uptodate disk is P
-		 * then we already trusted P to compute the other failed
-		 * drives. It is safe to compute rather than re-read P.
-		 * In other cases we only compute blocks from failed
-		 * devices, otherwise check/repair might fail to detect
-		 * a real inconsistency.
-		 */
-
 		if ((s->uptodate == disks - 1) &&
-		    ((sh->qd_idx >= 0 && sh->pd_idx == disk_idx) ||
 		    (s->failed && (disk_idx == s->failed_num[0] ||
-				   disk_idx == s->failed_num[1])))) {
+				   disk_idx == s->failed_num[1]))) {
 			/* have disk failed, and we're requested to fetch it;
 			 * do compute it
 			 */
