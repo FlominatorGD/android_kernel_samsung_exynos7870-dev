@@ -1043,7 +1043,6 @@ static int mos7840_open(struct tty_struct *tty, struct usb_serial_port *port)
 	 * (can't set it up in mos7840_startup as the structures *
 	 * were not set up at that time.)                        */
 	if (port0->open_ports == 1) {
-		/* FIXME: Buffer never NULL, so URB is not submitted. */
 		if (serial->port[0]->interrupt_in_buffer == NULL) {
 			/* set up interrupt urb */
 			usb_fill_int_urb(serial->port[0]->interrupt_in_urb,
@@ -1391,10 +1390,8 @@ static int mos7840_write(struct tty_struct *tty, struct usb_serial_port *port,
 	if (urb->transfer_buffer == NULL) {
 		urb->transfer_buffer = kmalloc(URB_TRANSFER_BUFFER_SIZE,
 					       GFP_ATOMIC);
-		if (!urb->transfer_buffer) {
-			bytes_sent = -ENOMEM;
+		if (!urb->transfer_buffer)
 			goto exit;
-		}
 	}
 	transfer_size = min(count, URB_TRANSFER_BUFFER_SIZE);
 
@@ -2207,8 +2204,7 @@ static int mos7840_calc_num_ports(struct usb_serial *serial)
 static int mos7840_attach(struct usb_serial *serial)
 {
 	if (serial->num_bulk_in < serial->num_ports ||
-			serial->num_bulk_out < serial->num_ports ||
-			serial->num_interrupt_in < 1) {
+			serial->num_bulk_out < serial->num_ports) {
 		dev_err(&serial->interface->dev, "missing endpoints\n");
 		return -ENODEV;
 	}
