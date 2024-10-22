@@ -60,8 +60,7 @@ static struct tracer_flags blk_tracer_flags = {
 };
 
 /* Global reference count of probes */
-static DEFINE_MUTEX(blk_probe_mutex);
-static int blk_probes_ref;
+static atomic_t blk_probes_ref = ATOMIC_INIT(0);
 
 static void blk_register_tracepoints(void);
 static void blk_unregister_tracepoints(void);
@@ -304,27 +303,12 @@ static void blk_trace_free(struct blk_trace *bt)
 	kfree(bt);
 }
 
-static void get_probe_ref(void)
-{
-	mutex_lock(&blk_probe_mutex);
-	if (++blk_probes_ref == 1)
-		blk_register_tracepoints();
-	mutex_unlock(&blk_probe_mutex);
-}
-
-static void put_probe_ref(void)
-{
-	mutex_lock(&blk_probe_mutex);
-	if (!--blk_probes_ref)
-		blk_unregister_tracepoints();
-	mutex_unlock(&blk_probe_mutex);
-}
-
 static void blk_trace_cleanup(struct blk_trace *bt)
 {
 	synchronize_rcu();
 	blk_trace_free(bt);
-	put_probe_ref();
+	if (atomic_dec_and_test(&blk_probes_ref))
+		blk_unregister_tracepoints();
 }
 
 static int __blk_trace_remove(struct request_queue *q)
@@ -568,7 +552,8 @@ int do_blk_trace_setup(struct request_queue *q, char *name, dev_t dev,
 		goto err;
 	}
 
-	get_probe_ref();
+	if (atomic_inc_return(&blk_probes_ref) == 1)
+		blk_register_tracepoints();
 
 	return 0;
 err:
@@ -1605,7 +1590,8 @@ static int blk_trace_remove_queue(struct request_queue *q)
 	if (bt == NULL)
 		return -EINVAL;
 
-	put_probe_ref();
+	if (atomic_dec_and_test(&blk_probes_ref))
+		blk_unregister_tracepoints();
 
 	spin_lock_irq(&running_trace_lock);
 	list_del(&bt->running_list);
@@ -1645,7 +1631,8 @@ static int blk_trace_setup_queue(struct request_queue *q,
 		goto free_bt;
 	}
 
-	get_probe_ref();
+	if (atomic_inc_return(&blk_probes_ref) == 1)
+		blk_register_tracepoints();
 	return 0;
 
 free_bt:
@@ -1931,6 +1918,8 @@ void blk_dump_cmd(char *buf, struct request *rq)
 	}
 }
 
+SIO_PATCH_VERSION(ftrace_discard_bugfix, 1, 0, "");
+
 void blk_fill_rwbs(char *rwbs, u32 rw, int bytes)
 {
 	int i = 0;
@@ -1938,10 +1927,10 @@ void blk_fill_rwbs(char *rwbs, u32 rw, int bytes)
 	if (rw & REQ_FLUSH)
 		rwbs[i++] = 'F';
 
-	if (rw & WRITE)
-		rwbs[i++] = 'W';
-	else if (rw & REQ_DISCARD)
+	if (rw & REQ_DISCARD)
 		rwbs[i++] = 'D';
+	else if (rw & WRITE)
+		rwbs[i++] = 'W';
 	else if (bytes)
 		rwbs[i++] = 'R';
 	else
