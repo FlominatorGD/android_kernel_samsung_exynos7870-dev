@@ -27,6 +27,9 @@
 #include "debugfs.h"
 #include "wext-compat.h"
 #include "rdev-ops.h"
+#if 1 /* 20151217 Temporal patch for page allocation fail when wifi on */
+#include <linux/vmalloc.h>
+#endif
 
 /* name for sysfs, %d is appended */
 #define PHY_NAME "phy"
@@ -358,7 +361,11 @@ struct wiphy *wiphy_new_nm(const struct cfg80211_ops *ops, int sizeof_priv,
 
 	alloc_size = sizeof(*rdev) + sizeof_priv;
 
+#if 1 /* 20151217 Temporal patch for page allocation fail when wifi on */
+	rdev = vzalloc(alloc_size);
+#else
 	rdev = kzalloc(alloc_size, GFP_KERNEL);
+#endif
 	if (!rdev)
 		return NULL;
 
@@ -369,7 +376,11 @@ struct wiphy *wiphy_new_nm(const struct cfg80211_ops *ops, int sizeof_priv,
 	if (unlikely(rdev->wiphy_idx < 0)) {
 		/* ugh, wrapped! */
 		atomic_dec(&wiphy_counter);
+#if 1 /* 20151217 Temporal patch for page allocation fail when wifi on */
+		vfree(rdev);
+#else
 		kfree(rdev);
+#endif
 		return NULL;
 	}
 
@@ -393,8 +404,6 @@ struct wiphy *wiphy_new_nm(const struct cfg80211_ops *ops, int sizeof_priv,
 		if (rv)
 			goto use_default_name;
 	} else {
-		int rv;
-
 use_default_name:
 		/* NOTE:  This is *probably* safe w/out holding rtnl because of
 		 * the restrictions on phy names.  Probably this call could
@@ -402,11 +411,7 @@ use_default_name:
 		 * phyX.  But, might should add some locking and check return
 		 * value, and use a different name if this one exists?
 		 */
-		rv = dev_set_name(&rdev->wiphy.dev, PHY_NAME "%d", rdev->wiphy_idx);
-		if (rv < 0) {
-			kfree(rdev);
-			return NULL;
-		}
+		dev_set_name(&rdev->wiphy.dev, PHY_NAME "%d", rdev->wiphy_idx);
 	}
 
 	INIT_LIST_HEAD(&rdev->wdev_list);
@@ -806,7 +811,11 @@ void cfg80211_dev_free(struct cfg80211_registered_device *rdev)
 	}
 	list_for_each_entry_safe(scan, tmp, &rdev->bss_list, list)
 		cfg80211_put_bss(&rdev->wiphy, &scan->pub);
+#if 1 /* 20151217 Temporal patch for page allocation fail when wifi on */
+	vfree(rdev);
+#else
 	kfree(rdev);
+#endif
 }
 
 void wiphy_free(struct wiphy *wiphy)
