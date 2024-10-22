@@ -1880,19 +1880,19 @@ static ssize_t dapm_widget_power_read_file(struct file *file,
 	out = is_connected_output_ep(w, NULL);
 	dapm_clear_walk_output(w->dapm, &w->sinks);
 
-	ret = scnprintf(buf, PAGE_SIZE, "%s: %s%s  in %d out %d",
+	ret = snprintf(buf, PAGE_SIZE, "%s: %s%s  in %d out %d",
 		       w->name, w->power ? "On" : "Off",
 		       w->force ? " (forced)" : "", in, out);
 
 	if (w->reg >= 0)
-		ret += scnprintf(buf + ret, PAGE_SIZE - ret,
+		ret += snprintf(buf + ret, PAGE_SIZE - ret,
 				" - R%d(0x%x) mask 0x%x",
 				w->reg, w->reg, w->mask << w->shift);
 
-	ret += scnprintf(buf + ret, PAGE_SIZE - ret, "\n");
+	ret += snprintf(buf + ret, PAGE_SIZE - ret, "\n");
 
 	if (w->sname)
-		ret += scnprintf(buf + ret, PAGE_SIZE - ret, " stream %s %s\n",
+		ret += snprintf(buf + ret, PAGE_SIZE - ret, " stream %s %s\n",
 				w->sname,
 				w->active ? "active" : "inactive");
 
@@ -1911,7 +1911,7 @@ static ssize_t dapm_widget_power_read_file(struct file *file,
 			continue;
 
 		if (p->connect)
-			ret += scnprintf(buf + ret, PAGE_SIZE - ret,
+			ret += snprintf(buf + ret, PAGE_SIZE - ret,
 					" out \"%s\" \"%s\"\n",
 					p->name ? p->name : "static",
 					p->sink->name);
@@ -3356,16 +3356,6 @@ int snd_soc_dapm_new_dai_widgets(struct snd_soc_dapm_context *dapm,
 			template.name);
 
 		w = snd_soc_dapm_new_control(dapm, &template);
-		if (IS_ERR(w)) {
-			int ret = PTR_ERR(w);
-
-			/* Do not nag about probe deferrals */
-			if (ret != -EPROBE_DEFER)
-				dev_err(dapm->dev,
-				"ASoC: Failed to create %s widget (%d)\n",
-				dai->driver->playback.stream_name, ret);
-			return ret;
-		}
 		if (!w) {
 			dev_err(dapm->dev, "ASoC: Failed to create %s widget\n",
 				dai->driver->playback.stream_name);
@@ -3385,16 +3375,6 @@ int snd_soc_dapm_new_dai_widgets(struct snd_soc_dapm_context *dapm,
 			template.name);
 
 		w = snd_soc_dapm_new_control(dapm, &template);
-		if (IS_ERR(w)) {
-			int ret = PTR_ERR(w);
-
-			/* Do not nag about probe deferrals */
-			if (ret != -EPROBE_DEFER)
-				dev_err(dapm->dev,
-				"ASoC: Failed to create %s widget (%d)\n",
-				dai->driver->playback.stream_name, ret);
-			return ret;
-		}
 		if (!w) {
 			dev_err(dapm->dev, "ASoC: Failed to create %s widget\n",
 				dai->driver->capture.stream_name);
