@@ -858,6 +858,12 @@ const char * const vmstat_text[] = {
 	"compact_stall",
 	"compact_fail",
 	"compact_success",
+#ifdef CONFIG_SEC_PHCOMP	
+	"compact_defered",
+	"compact_call_defer",
+	"phcomp_defered",
+	"phcomp_call_defer",
+#endif	
 #endif
 
 #ifdef CONFIG_HUGETLB_PAGE
@@ -889,8 +895,10 @@ const char * const vmstat_text[] = {
 #endif
 #endif /* CONFIG_MEMORY_BALLOON */
 #ifdef CONFIG_DEBUG_TLBFLUSH
+#ifdef CONFIG_SMP
 	"nr_tlb_remote_flush",
 	"nr_tlb_remote_flush_received",
+#endif /* CONFIG_SMP */
 	"nr_tlb_local_flush_all",
 	"nr_tlb_local_flush_one",
 #endif /* CONFIG_DEBUG_TLBFLUSH */
@@ -946,9 +954,6 @@ static void pagetypeinfo_showfree_print(struct seq_file *m,
 			list_for_each(curr, &area->free_list[mtype])
 				freecount++;
 			seq_printf(m, "%6lu ", freecount);
-			spin_unlock_irq(&zone->lock);
-			cond_resched();
-			spin_lock_irq(&zone->lock);
 		}
 		seq_putc(m, '\n');
 	}
@@ -1225,9 +1230,7 @@ static int vmstat_show(struct seq_file *m, void *arg)
 	unsigned long *l = arg;
 	unsigned long off = l - (unsigned long *)m->private;
 
-	seq_puts(m, vmstat_text[off]);
-	seq_put_decimal_ull(m, ' ', *l);
-	seq_putc(m, '\n');
+	seq_printf(m, "%s %lu\n", vmstat_text[off], *l);
 	return 0;
 }
 
