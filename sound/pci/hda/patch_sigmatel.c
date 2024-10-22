@@ -101,7 +101,6 @@ enum {
 	STAC_HP_ENVY_BASS,
 	STAC_HP_BNB13_EQ,
 	STAC_HP_ENVY_TS_BASS,
-	STAC_HP_ENVY_TS_DAC_BIND,
 	STAC_92HD83XXX_GPIO10_EAPD,
 	STAC_92HD83XXX_MODELS
 };
@@ -859,7 +858,7 @@ static int stac_auto_create_beep_ctls(struct hda_codec *codec,
 	static struct snd_kcontrol_new beep_vol_ctl =
 		HDA_CODEC_VOLUME(NULL, 0, 0, 0);
 
-	/* check for mute support for the amp */
+	/* check for mute support for the the amp */
 	if ((caps & AC_AMPCAP_MUTE) >> AC_AMPCAP_MUTE_SHIFT) {
 		const struct snd_kcontrol_new *temp;
 		if (spec->anabeep_nid == nid)
@@ -2193,22 +2192,6 @@ static void stac92hd83xxx_fixup_gpio10_eapd(struct hda_codec *codec,
 	spec->eapd_switch = 0;
 }
 
-static void hp_envy_ts_fixup_dac_bind(struct hda_codec *codec,
-					    const struct hda_fixup *fix,
-					    int action)
-{
-	struct sigmatel_spec *spec = codec->spec;
-	static hda_nid_t preferred_pairs[] = {
-		0xd, 0x13,
-		0
-	};
-
-	if (action != HDA_FIXUP_ACT_PRE_PROBE)
-		return;
-
-	spec->gen.preferred_dacs = preferred_pairs;
-}
-
 static const struct hda_verb hp_bnb13_eq_verbs[] = {
 	/* 44.1KHz base */
 	{ 0x22, 0x7A6, 0x3E },
@@ -2723,12 +2706,6 @@ static const struct hda_fixup stac92hd83xxx_fixups[] = {
 			{ 0x10, 0x92170111 },
 			{}
 		},
-	},
-	[STAC_HP_ENVY_TS_DAC_BIND] = {
-		.type = HDA_FIXUP_FUNC,
-		.v.func = hp_envy_ts_fixup_dac_bind,
-		.chained = true,
-		.chain_id = STAC_HP_ENVY_TS_BASS,
 	},
 	[STAC_92HD83XXX_GPIO10_EAPD] = {
 		.type = HDA_FIXUP_FUNC,
