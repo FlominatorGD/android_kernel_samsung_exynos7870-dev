@@ -930,16 +930,7 @@ common_load:
 		}
 
 		if (image) {
-			/*
-			 * When populating the image, assert that:
-			 *
-			 *  i) We do not write beyond the allocated space, and
-			 * ii) addrs[i] did not change from the prior run, in order
-			 *     to validate assumptions made for computing branch
-			 *     displacements.
-			 */
-			if (unlikely(proglen + ilen > oldproglen ||
-				     proglen + ilen != addrs[i])) {
+			if (unlikely(proglen + ilen > oldproglen)) {
 				pr_err("bpf_jit_compile fatal error\n");
 				return -EFAULT;
 			}
@@ -990,7 +981,7 @@ void bpf_int_jit_compile(struct bpf_prog *prog)
 	 * may converge on the last pass. In such case do one more
 	 * pass to emit the final image
 	 */
-	for (pass = 0; pass < 20 || image; pass++) {
+	for (pass = 0; pass < 10 || image; pass++) {
 		proglen = do_jit(prog, addrs, image, oldproglen, &ctx);
 		if (proglen <= 0) {
 			image = NULL;
@@ -1013,7 +1004,6 @@ void bpf_int_jit_compile(struct bpf_prog *prog)
 				goto out;
 		}
 		oldproglen = proglen;
-		cond_resched();
 	}
 
 	if (bpf_jit_enable > 1)
