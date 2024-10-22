@@ -635,12 +635,8 @@ cdc_ncm_find_endpoints(struct usbnet *dev, struct usb_interface *intf)
 	u8 ep;
 
 	for (ep = 0; ep < intf->cur_altsetting->desc.bNumEndpoints; ep++) {
+
 		e = intf->cur_altsetting->endpoint + ep;
-
-		/* ignore endpoints which cannot transfer data */
-		if (!usb_endpoint_maxp(&e->desc))
-			continue;
-
 		switch (e->desc.bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) {
 		case USB_ENDPOINT_XFER_INT:
 			if (usb_endpoint_dir_in(&e->desc)) {
@@ -967,7 +963,6 @@ static int cdc_ncm_bind(struct usbnet *dev, struct usb_interface *intf)
 	if (cdc_ncm_select_altsetting(intf) != CDC_NCM_COMM_ALTSETTING_NCM)
 		return -ENODEV;
 
-	/* The NCM data altsetting is fixed */
 	return cdc_ncm_bind_common(dev, intf, CDC_NCM_DATA_ALTSETTING_NCM);
 }
 
@@ -1027,7 +1022,6 @@ cdc_ncm_fill_tx_frame(struct usbnet *dev, struct sk_buff *skb, __le32 sign)
 	struct sk_buff *skb_out;
 	u16 n = 0, index, ndplen;
 	u8 ready2send = 0;
-	size_t padding_count;
 
 	/* if there is a remaining skb, it gets priority */
 	if (skb != NULL) {
@@ -1165,13 +1159,11 @@ cdc_ncm_fill_tx_frame(struct usbnet *dev, struct sk_buff *skb, __le32 sign)
 	 * a ZLP after full sized NTBs.
 	 */
 	if (!(dev->driver_info->flags & FLAG_SEND_ZLP) &&
-	    skb_out->len > ctx->min_tx_pkt) {
-		padding_count = ctx->tx_max - skb_out->len;
-		memset(skb_put(skb_out, padding_count), 0, padding_count);
-	} else if (skb_out->len < ctx->tx_max &&
-		   (skb_out->len % dev->maxpacket) == 0) {
+	    skb_out->len > ctx->min_tx_pkt)
+		memset(skb_put(skb_out, ctx->tx_max - skb_out->len), 0,
+		       ctx->tx_max - skb_out->len);
+	else if (skb_out->len < ctx->tx_max && (skb_out->len % dev->maxpacket) == 0)
 		*skb_put(skb_out, 1) = 0;	/* force short packet */
-	}
 
 	/* set final frame length */
 	nth16 = (struct usb_cdc_ncm_nth16 *)skb_out->data;
@@ -1488,6 +1480,9 @@ static void cdc_ncm_status(struct usbnet *dev, struct urb *urb)
 		 * USB_CDC_NOTIFY_NETWORK_CONNECTION notification shall be
 		 * sent by device after USB_CDC_NOTIFY_SPEED_CHANGE.
 		 */
+		netif_info(dev, link, dev->net,
+			   "network connection: %sconnected\n",
+			   !!event->wValue ? "" : "dis");
 		usbnet_link_change(dev, !!event->wValue, 0);
 		break;
 
@@ -1511,7 +1506,7 @@ static void cdc_ncm_status(struct usbnet *dev, struct urb *urb)
 static const struct driver_info cdc_ncm_info = {
 	.description = "CDC NCM",
 	.flags = FLAG_POINTTOPOINT | FLAG_NO_SETINT | FLAG_MULTI_PACKET
-			| FLAG_LINK_INTR | FLAG_ETHER,
+					| FLAG_LINK_INTR,
 	.bind = cdc_ncm_bind,
 	.unbind = cdc_ncm_unbind,
 	.manage_power = usbnet_manage_power,
