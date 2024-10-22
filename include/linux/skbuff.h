@@ -1,3 +1,4 @@
+/* Copyright (c) 2015 Samsung Electronics Co., Ltd. */
 /*
  *	Definitions for the 'struct sk_buff' memory handlers.
  *
@@ -10,6 +11,14 @@
  *	as published by the Free Software Foundation; either version
  *	2 of the License, or (at your option) any later version.
  */
+/*
+ *  Changes:
+ *  KwnagHyun Kim <kh0304.kim@samsung.com> 2015/07/08
+ *  Baesung Park  <baesung.park@samsung.com> 2015/07/08
+ *  Vignesh Saravanaperumal <vignesh1.s@samsung.com> 2015/07/08
+ *    Add codes to share UID/PID information
+ *
+ */
 
 #ifndef _LINUX_SKBUFF_H
 #define _LINUX_SKBUFF_H
@@ -20,7 +29,6 @@
 #include <linux/time.h>
 #include <linux/bug.h>
 #include <linux/cache.h>
-#include <linux/rbtree.h>
 
 #include <linux/atomic.h>
 #include <asm/types.h>
@@ -320,6 +328,13 @@ struct skb_shared_info {
 	 * remains valid until skb destructor */
 	void *		destructor_arg;
 
+ // ------------- START of KNOX_VPN ------------------//
+	uid_t uid;
+	pid_t pid;
+	u_int32_t knox_mark;
+ // ------------- END of KNOX_VPN -------------------//
+
+
 	/* must be last field, see pskb_expand_head() */
 	skb_frag_t	frags[MAX_SKB_FRAGS];
 };
@@ -437,12 +452,11 @@ static inline u32 skb_mstamp_us_delta(const struct skb_mstamp *t1,
 }
 
 
-/** 
+/**
  *	struct sk_buff - socket buffer
  *	@next: Next buffer in list
  *	@prev: Previous buffer in list
  *	@tstamp: Time we arrived/left
- *	@rbnode: RB tree node, alternative to next/prev for netem/tcp
  *	@sk: Socket we are owned by
  *	@dev: Device we arrived on/are leaving by
  *	@cb: Control buffer. Free for use by every layer. Put private vars here
@@ -508,22 +522,13 @@ static inline u32 skb_mstamp_us_delta(const struct skb_mstamp *t1,
  */
 
 struct sk_buff {
-	union {
-		struct {
-			/* These two members must be first. */
-			struct sk_buff		*next;
-			struct sk_buff		*prev;
-
-			union {
-				ktime_t		tstamp;
-				struct skb_mstamp skb_mstamp;
-			};
-		};
-		struct rb_node	rbnode; /* used in netem & tcp stack */
-	};
+	/* These two members must be first. */
+	struct sk_buff		*next;
+	struct sk_buff		*prev;
 
 	union {
-		int			ip_defrag_offset;
+		ktime_t		tstamp;
+		struct skb_mstamp skb_mstamp;
 	};
 
 	struct sock		*sk;
@@ -636,6 +641,7 @@ struct sk_buff {
 #ifdef CONFIG_NETWORK_SECMARK
 	__u32			secmark;
 #endif
+	__u32			priomark;
 	union {
 		__u32		mark;
 		__u32		dropcount;
@@ -667,6 +673,7 @@ struct sk_buff {
 				*data;
 	unsigned int		truesize;
 	atomic_t		users;
+
 };
 
 #ifdef __KERNEL__
@@ -700,7 +707,7 @@ static inline bool skb_pfmemalloc(const struct sk_buff *skb)
  */
 static inline struct dst_entry *skb_dst(const struct sk_buff *skb)
 {
-	/* If refdst was not refcounted, check we still are in a 
+	/* If refdst was not refcounted, check we still are in a
 	 * rcu_read_lock section
 	 */
 	WARN_ON((skb->_skb_refdst & SKB_DST_NOREF) &&
@@ -1314,18 +1321,6 @@ static inline __u32 skb_queue_len(const struct sk_buff_head *list_)
 }
 
 /**
- *	skb_queue_len_lockless	- get queue length
- *	@list_: list to measure
- *
- *	Return the length of an &sk_buff queue.
- *	This variant can be used in lockless contexts.
- */
-static inline __u32 skb_queue_len_lockless(const struct sk_buff_head *list_)
-{
-	return READ_ONCE(list_->qlen);
-}
-
-/**
  *	__skb_queue_head_init - initialize non-spinlock portions of sk_buff_head
  *	@list: queue to initialize
  *
@@ -1528,7 +1523,7 @@ static inline void __skb_unlink(struct sk_buff *skb, struct sk_buff_head *list)
 {
 	struct sk_buff *next, *prev;
 
-	WRITE_ONCE(list->qlen, list->qlen - 1);
+	list->qlen--;
 	next	   = skb->next;
 	prev	   = skb->prev;
 	skb->next  = skb->prev = NULL;
@@ -2174,8 +2169,6 @@ static inline void __skb_queue_purge(struct sk_buff_head *list)
 #define NETDEV_FRAG_PAGE_MAX_SIZE  (PAGE_SIZE << NETDEV_FRAG_PAGE_MAX_ORDER)
 #define NETDEV_PAGECNT_MAX_BIAS	   NETDEV_FRAG_PAGE_MAX_SIZE
 
-unsigned int skb_rbtree_purge(struct rb_root *root);
-
 void *netdev_alloc_frag(unsigned int fragsz);
 
 struct sk_buff *__netdev_alloc_skb(struct net_device *dev, unsigned int length,
@@ -2446,13 +2439,6 @@ static inline int skb_clone_writable(const struct sk_buff *skb, unsigned int len
 	       skb_headroom(skb) + len <= skb->hdr_len;
 }
 
-static inline int skb_try_make_writable(struct sk_buff *skb,
-					unsigned int write_len)
-{
-	return skb_cloned(skb) && !skb_clone_writable(skb, write_len) &&
-	       pskb_expand_head(skb, 0, 0, GFP_ATOMIC);
-}
-
 static inline int __skb_cow(struct sk_buff *skb, unsigned int headroom,
 			    int cloned)
 {
@@ -2509,7 +2495,7 @@ static inline int skb_cow_head(struct sk_buff *skb, unsigned int headroom)
  *	is untouched. Otherwise it is extended. Returns zero on
  *	success. The skb is freed on error.
  */
- 
+
 static inline int skb_padto(struct sk_buff *skb, unsigned int len)
 {
 	unsigned int size = skb->len;
@@ -2616,8 +2602,6 @@ static inline void skb_postpull_rcsum(struct sk_buff *skb,
 
 unsigned char *skb_pull_rcsum(struct sk_buff *skb, unsigned int len);
 
-int pskb_trim_rcsum_slow(struct sk_buff *skb, unsigned int len);
-
 /**
  *	pskb_trim_rcsum - trim received skb and update checksum
  *	@skb: buffer to trim
@@ -2631,14 +2615,10 @@ static inline int pskb_trim_rcsum(struct sk_buff *skb, unsigned int len)
 {
 	if (likely(len >= skb->len))
 		return 0;
-	return pskb_trim_rcsum_slow(skb, len);
+	if (skb->ip_summed == CHECKSUM_COMPLETE)
+		skb->ip_summed = CHECKSUM_NONE;
+	return __pskb_trim(skb, len);
 }
-
-#define rb_to_skb(rb) rb_entry_safe(rb, struct sk_buff, rbnode)
-#define skb_rb_first(root) rb_to_skb(rb_first(root))
-#define skb_rb_last(root)  rb_to_skb(rb_last(root))
-#define skb_rb_next(skb)   rb_to_skb(rb_next(&(skb)->rbnode))
-#define skb_rb_prev(skb)   rb_to_skb(rb_prev(&(skb)->rbnode))
 
 #define skb_queue_walk(queue, skb) \
 		for (skb = (queue)->next;					\
@@ -2702,7 +2682,7 @@ unsigned int datagram_poll(struct file *file, struct socket *sock,
 int skb_copy_datagram_iovec(const struct sk_buff *from, int offset,
 			    struct iovec *to, int size);
 int skb_copy_and_csum_datagram_iovec(struct sk_buff *skb, int hlen,
-				     struct iovec *iov);
+				     struct iovec *iov, int len);
 int skb_copy_datagram_from_iovec(struct sk_buff *skb, int offset,
 				 const struct iovec *from, int from_offset,
 				 int len);
