@@ -105,20 +105,19 @@
 #include <linux/module.h>
 #include <asm/sections.h>
 
-#define v1printk(a...) do {		\
-	if (verbose)			\
-		printk(KERN_INFO a);	\
-} while (0)
-#define v2printk(a...) do {		\
-	if (verbose > 1) {		\
-		printk(KERN_INFO a);	\
-	}				\
-	touch_nmi_watchdog();		\
-} while (0)
-#define eprintk(a...) do {		\
-	printk(KERN_ERR a);		\
-	WARN_ON(1);			\
-} while (0)
+#define v1printk(a...) do { \
+	if (verbose) \
+		printk(KERN_INFO a); \
+	} while (0)
+#define v2printk(a...) do { \
+	if (verbose > 1) \
+		printk(KERN_INFO a); \
+		touch_nmi_watchdog();	\
+	} while (0)
+#define eprintk(a...) do { \
+		printk(KERN_ERR a); \
+		WARN_ON(1); \
+	} while (0)
 #define MAX_CONFIG_LEN		40
 
 static struct kgdb_io kgdbts_io_ops;
@@ -1128,7 +1127,7 @@ static void kgdbts_put_char(u8 chr)
 
 static int param_set_kgdbts_var(const char *kmessage, struct kernel_param *kp)
 {
-	size_t len = strlen(kmessage);
+	int len = strlen(kmessage);
 
 	if (len >= MAX_CONFIG_LEN) {
 		printk(KERN_ERR "kgdbts: config string too long\n");
@@ -1148,7 +1147,7 @@ static int param_set_kgdbts_var(const char *kmessage, struct kernel_param *kp)
 
 	strcpy(config, kmessage);
 	/* Chop out \n char as a result of echo */
-	if (len && config[len - 1] == '\n')
+	if (config[len - 1] == '\n')
 		config[len - 1] = '\0';
 
 	/* Go and configure with the new params. */
