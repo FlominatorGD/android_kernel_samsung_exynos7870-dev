@@ -95,7 +95,7 @@ static void clk_enable_unlock(unsigned long flags)
 
 /***        debugfs support        ***/
 
-#ifdef CONFIG_DEBUG_FS
+#if defined(CONFIG_DEBUG_FS) && !defined(CONFIG_ARCH_EXYNOS)
 #include <linux/debugfs.h>
 
 static struct dentry *rootdir;
@@ -1802,10 +1802,6 @@ int clk_set_rate(struct clk *clk, unsigned long rate)
 	/* prevent racing with updates to the clock topology */
 	clk_prepare_lock();
 
-	/* bail early if nothing to do */
-	if (rate == clk_get_rate(clk))
-		goto out;
-
 	if ((clk->flags & CLK_SET_RATE_GATE) && clk->prepare_count) {
 		ret = -EBUSY;
 		goto out;
@@ -1832,9 +1828,6 @@ int clk_set_rate(struct clk *clk, unsigned long rate)
 	clk_change_rate(top);
 
 out:
-	/* Always try to update cached phase if possible */
-	if (clk->ops->get_phase)
-		clk->phase = clk->ops->get_phase(clk->hw);
 	clk_prepare_unlock();
 
 	return ret;
@@ -1950,9 +1943,6 @@ int clk_set_parent(struct clk *clk, struct clk *parent)
 
 	/* prevent racing with updates to the clock topology */
 	clk_prepare_lock();
-
-	if (clk->parent == parent)
-		goto out;
 
 	/* check that we are allowed to re-parent if the clock is in use */
 	if ((clk->flags & CLK_SET_PARENT_GATE) && clk->prepare_count) {
@@ -2633,28 +2623,32 @@ EXPORT_SYMBOL_GPL(clk_notifier_register);
  */
 int clk_notifier_unregister(struct clk *clk, struct notifier_block *nb)
 {
-	struct clk_notifier *cn;
-	int ret = -ENOENT;
+	struct clk_notifier *cn = NULL;
+	int ret = -EINVAL;
 
 	if (!clk || !nb)
 		return -EINVAL;
 
 	clk_prepare_lock();
 
-	list_for_each_entry(cn, &clk_notifier_list, node) {
-		if (cn->clk == clk) {
-			ret = srcu_notifier_chain_unregister(&cn->notifier_head, nb);
-
-			clk->notifier_count--;
-
-			/* XXX the notifier code should handle this better */
-			if (!cn->notifier_head.head) {
-				srcu_cleanup_notifier_head(&cn->notifier_head);
-				list_del(&cn->node);
-				kfree(cn);
-			}
+	list_for_each_entry(cn, &clk_notifier_list, node)
+		if (cn->clk == clk)
 			break;
+
+	if (cn->clk == clk) {
+		ret = srcu_notifier_chain_unregister(&cn->notifier_head, nb);
+
+		clk->notifier_count--;
+
+		/* XXX the notifier code should handle this better */
+		if (!cn->notifier_head.head) {
+			srcu_cleanup_notifier_head(&cn->notifier_head);
+			list_del(&cn->node);
+			kfree(cn);
 		}
+
+	} else {
+		ret = -ENOENT;
 	}
 
 	clk_prepare_unlock();
