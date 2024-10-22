@@ -3393,18 +3393,9 @@ _scsih_check_volume_delete_events(struct MPT3SAS_ADAPTER *ioc,
 		    le16_to_cpu(event_data->VolDevHandle));
 }
 
-static int _scsih_set_satl_pending(struct scsi_cmnd *scmd, bool pending)
+static inline bool ata_12_16_cmd(struct scsi_cmnd *scmd)
 {
-	struct MPT3SAS_DEVICE *priv = scmd->device->hostdata;
-
-	if (scmd->cmnd[0] != ATA_12 && scmd->cmnd[0] != ATA_16)
-		return 0;
-
-	if (pending)
-		return test_and_set_bit(0, &priv->ata_command_pending);
-
-	clear_bit(0, &priv->ata_command_pending);
-	return 0;
+	return (scmd->cmnd[0] == ATA_12 || scmd->cmnd[0] == ATA_16);
 }
 
 /**
@@ -3428,7 +3419,9 @@ _scsih_flush_running_cmds(struct MPT3SAS_ADAPTER *ioc)
 		if (!scmd)
 			continue;
 		count++;
-		_scsih_set_satl_pending(scmd, false);
+		if (ata_12_16_cmd(scmd))
+			scsi_internal_device_unblock(scmd->device,
+							SDEV_RUNNING);
 		mpt3sas_base_free_smid(ioc, smid);
 		scsi_dma_unmap(scmd);
 		if (ioc->pci_error_recovery)
@@ -3560,6 +3553,13 @@ _scsih_qcmd(struct Scsi_Host *shost, struct scsi_cmnd *scmd)
 		scsi_print_command(scmd);
 #endif
 
+	/*
+	 * Lock the device for any subsequent command until command is
+	 * done.
+	 */
+	if (ata_12_16_cmd(scmd))
+		scsi_internal_device_block(scmd->device);
+
 	sas_device_priv_data = scmd->device->hostdata;
 	if (!sas_device_priv_data || !sas_device_priv_data->sas_target) {
 		scmd->result = DID_NO_CONNECT << 16;
@@ -3598,19 +3598,6 @@ _scsih_qcmd(struct Scsi_Host *shost, struct scsi_cmnd *scmd)
 	    sas_device_priv_data->block)
 		return SCSI_MLQUEUE_DEVICE_BUSY;
 
-	/*
-	 * Bug work around for firmware SATL handling.  The loop
-	 * is based on atomic operations and ensures consistency
-	 * since we're lockless at this point
-	 */
-	do {
-		if (test_bit(0, &sas_device_priv_data->ata_command_pending)) {
-			scmd->result = SAM_STAT_BUSY;
-			scmd->scsi_done(scmd);
-			return 0;
-		}
-	} while (_scsih_set_satl_pending(scmd, true));
-
 	if (scmd->sc_data_direction == DMA_FROM_DEVICE)
 		mpi_control = MPI2_SCSIIO_CONTROL_READ;
 	else if (scmd->sc_data_direction == DMA_TO_DEVICE)
@@ -3638,7 +3625,6 @@ _scsih_qcmd(struct Scsi_Host *shost, struct scsi_cmnd *scmd)
 	if (!smid) {
 		pr_err(MPT3SAS_FMT "%s: failed obtaining a smid\n",
 		    ioc->name, __func__);
-		_scsih_set_satl_pending(scmd, false);
 		goto out;
 	}
 	mpi_request = mpt3sas_base_get_msg_frame(ioc, smid);
@@ -3669,7 +3655,6 @@ _scsih_qcmd(struct Scsi_Host *shost, struct scsi_cmnd *scmd)
 	if (mpi_request->DataLength) {
 		if (ioc->build_sg_scmd(ioc, scmd, smid)) {
 			mpt3sas_base_free_smid(ioc, smid);
-			_scsih_set_satl_pending(scmd, false);
 			goto out;
 		}
 	} else
@@ -4112,14 +4097,14 @@ _scsih_io_done(struct MPT3SAS_ADAPTER *ioc, u16 smid, u8 msix_index, u32 reply)
 	u32 log_info;
 	struct MPT3SAS_DEVICE *sas_device_priv_data;
 	u32 response_code = 0;
-	unsigned int sector_sz;
 
 	mpi_reply = mpt3sas_base_get_reply_virt_addr(ioc, reply);
 	scmd = _scsih_scsi_lookup_get_clear(ioc, smid);
 	if (scmd == NULL)
 		return 1;
 
-	_scsih_set_satl_pending(scmd, false);
+	if (ata_12_16_cmd(scmd))
+		scsi_internal_device_unblock(scmd->device, SDEV_RUNNING);
 
 	mpi_request = mpt3sas_base_get_msg_frame(ioc, smid);
 
@@ -4150,20 +4135,6 @@ _scsih_io_done(struct MPT3SAS_ADAPTER *ioc, u16 smid, u8 msix_index, u32 reply)
 	}
 
 	xfer_cnt = le32_to_cpu(mpi_reply->TransferCount);
-
-	/* In case of bogus fw or device, we could end up having
-	 * unaligned partial completion. We can force alignment here,
-	 * then scsi-ml does not need to handle this misbehavior.
-	 */
-	sector_sz = scmd->device->sector_size;
-	if (unlikely(scmd->request->cmd_type == REQ_TYPE_FS && sector_sz &&
-		     xfer_cnt % sector_sz)) {
-		sdev_printk(KERN_INFO, scmd->device,
-		    "unaligned partial completion avoided (xfer_cnt=%u, sector_sz=%u)\n",
-			    xfer_cnt, sector_sz);
-		xfer_cnt = round_down(xfer_cnt, sector_sz);
-	}
-
 	scsi_set_resid(scmd, scsi_bufflen(scmd) - xfer_cnt);
 	if (ioc_status & MPI2_IOCSTATUS_FLAG_LOG_INFO_AVAILABLE)
 		log_info =  le32_to_cpu(mpi_reply->IOCLogInfo);
@@ -4218,11 +4189,6 @@ _scsih_io_done(struct MPT3SAS_ADAPTER *ioc, u16 smid, u8 msix_index, u32 reply)
 				scmd->result = DID_SOFT_ERROR << 16;
 				scmd->device->expecting_cc_ua = 1;
 			}
-			break;
-		} else if ((scmd->device->channel == RAID_CHANNEL) &&
-		   (scsi_state == (MPI2_SCSI_STATE_TERMINATED |
-		   MPI2_SCSI_STATE_NO_SCSI_STATUS))) {
-			scmd->result = DID_RESET << 16;
 			break;
 		}
 		scmd->result = DID_SOFT_ERROR << 16;
