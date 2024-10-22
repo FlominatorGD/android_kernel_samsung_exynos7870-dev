@@ -4,13 +4,6 @@
 #include <linux/compiler.h>
 #include <linux/types.h>
 
-/* Built-in __init functions needn't be compiled with retpoline */
-#if defined(RETPOLINE) && !defined(MODULE)
-#define __noretpoline __attribute__((indirect_branch("keep")))
-#else
-#define __noretpoline
-#endif
-
 /* These macros are used to mark some functions or 
  * initialized data (doesn't apply to uninitialized data)
  * as `initialization' functions. The kernel can take this
@@ -46,7 +39,7 @@
 
 /* These are for everybody (although not all archs will actually
    discard it in modules) */
-#define __init		__section(.init.text) __cold notrace __noretpoline
+#define __init		__section(.init.text) __cold notrace
 #define __initdata	__section(.init.data)
 #define __initconst	__constsection(.init.rodata)
 #define __exitdata	__section(.exit.data)
@@ -98,6 +91,14 @@
 
 #define __exit          __section(.exit.text) __exitused __cold notrace
 
+/* Used for HOTPLUG */
+#define __devinit        __section(.devinit.text) __cold notrace
+#define __devinitdata    __section(.devinit.data)
+#define __devinitconst   __section(.devinit.rodata)
+#define __devexit        __section(.devexit.text) __exitused __cold notrace
+#define __devexitdata    __section(.devexit.data)
+#define __devexitconst   __section(.devexit.rodata)
+
 /* temporary, until all users are removed */
 #define __cpuinit
 #define __cpuinitdata
@@ -122,6 +123,10 @@
 #define __INITDATA	.section	".init.data","aw",%progbits
 #define __INITRODATA	.section	".init.rodata","a",%progbits
 #define __FINITDATA	.previous
+
+#define __DEVINIT        .section	".devinit.text", "ax"
+#define __DEVINITDATA    .section	".devinit.data", "aw"
+#define __DEVINITRODATA  .section	".devinit.rodata", "a"
 
 /* temporary, until all users are removed */
 #define __CPUINIT
@@ -370,6 +375,18 @@ void __init parse_early_options(char *cmdline);
 #define __INITDATA_OR_MODULE __INITDATA
 #define __INITRODATA_OR_MODULE __INITRODATA
 #endif /*CONFIG_MODULES*/
+
+/* Functions marked as __devexit may be discarded at kernel link time, depending
+   on config options.  Newer versions of binutils detect references from
+   retained sections to discarded sections and flag an error.  Pointers to
+   __devexit functions must use __devexit_p(function_name), the wrapper will
+   insert either the function_name or NULL, depending on the config options.
+ */
+#if defined(MODULE) || defined(CONFIG_HOTPLUG)
+#define __devexit_p(x) x
+#else
+#define __devexit_p(x) NULL
+#endif
 
 #ifdef MODULE
 #define __exit_p(x) x
