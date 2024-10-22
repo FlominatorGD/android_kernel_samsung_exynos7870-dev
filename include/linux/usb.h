@@ -97,41 +97,6 @@ enum usb_interface_condition {
 	USB_INTERFACE_UNBINDING,
 };
 
-int __must_check
-usb_find_common_endpoints(struct usb_host_interface *alt,
-		struct usb_endpoint_descriptor **bulk_in,
-		struct usb_endpoint_descriptor **bulk_out,
-		struct usb_endpoint_descriptor **int_in,
-		struct usb_endpoint_descriptor **int_out);
-
-static inline int __must_check
-usb_find_bulk_in_endpoint(struct usb_host_interface *alt,
-		struct usb_endpoint_descriptor **bulk_in)
-{
-	return usb_find_common_endpoints(alt, bulk_in, NULL, NULL, NULL);
-}
-
-static inline int __must_check
-usb_find_bulk_out_endpoint(struct usb_host_interface *alt,
-		struct usb_endpoint_descriptor **bulk_out)
-{
-	return usb_find_common_endpoints(alt, NULL, bulk_out, NULL, NULL);
-}
-
-static inline int __must_check
-usb_find_int_in_endpoint(struct usb_host_interface *alt,
-		struct usb_endpoint_descriptor **int_in)
-{
-	return usb_find_common_endpoints(alt, NULL, NULL, int_in, NULL);
-}
-
-static inline int __must_check
-usb_find_int_out_endpoint(struct usb_host_interface *alt,
-		struct usb_endpoint_descriptor **int_out)
-{
-	return usb_find_common_endpoints(alt, NULL, NULL, NULL, int_out);
-}
-
 /**
  * struct usb_interface - what usb device drivers talk to
  * @altsetting: array of interface structures, one for each alternate
@@ -215,6 +180,7 @@ struct usb_interface {
 
 	struct device dev;		/* interface specific device info */
 	struct device *usb_dev;
+	atomic_t pm_usage_cnt;		/* usage counter for autosuspend */
 	struct work_struct reset_ws;	/* for resets in atomic context */
 };
 #define	to_usb_interface(d) container_of(d, struct usb_interface, dev)
@@ -359,7 +325,6 @@ struct usb_host_bos {
 	struct usb_ext_cap_descriptor	*ext_cap;
 	struct usb_ss_cap_descriptor	*ss_cap;
 	struct usb_ss_container_id_descriptor	*ss_id;
-	struct usb_ptm_cap_descriptor	*ptm_cap;
 };
 
 int __usb_get_extra_descriptor(char *buffer, unsigned size,
@@ -1254,6 +1219,9 @@ extern int usb_disabled(void);
 
 /* The following flags are used internally by usbcore and HCDs */
 #define URB_DIR_IN		0x0200	/* Transfer from device to host */
+#ifdef CONFIG_HOST_COMPLIANT_TEST
+#define URB_HCD_DRIVER_TEST	0x0400  /* Do NOT hand back or free this URB. */
+#endif
 #define URB_DIR_OUT		0
 #define URB_DIR_MASK		URB_DIR_IN
 
