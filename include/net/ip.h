@@ -275,19 +275,12 @@ int ip_decrease_ttl(struct iphdr *iph)
 	return --iph->ttl;
 }
 
-static inline int ip_mtu_locked(const struct dst_entry *dst)
-{
-	const struct rtable *rt = (const struct rtable *)dst;
-
-	return rt->rt_mtu_locked || dst_metric_locked(dst, RTAX_MTU);
-}
-
 static inline
 int ip_dont_fragment(struct sock *sk, struct dst_entry *dst)
 {
 	return  inet_sk(sk)->pmtudisc == IP_PMTUDISC_DO ||
 		(inet_sk(sk)->pmtudisc == IP_PMTUDISC_WANT &&
-		 !ip_mtu_locked(dst));
+		 !(dst_metric_locked(dst, RTAX_MTU)));
 }
 
 static inline bool ip_sk_accept_pmtu(const struct sock *sk)
@@ -311,19 +304,13 @@ static inline unsigned int ip_dst_mtu_maybe_forward(const struct dst_entry *dst,
 						    bool forwarding)
 {
 	struct net *net = dev_net(dst->dev);
-	unsigned int mtu;
 
 	if (net->ipv4.sysctl_ip_fwd_use_pmtu ||
-	    ip_mtu_locked(dst) ||
+	    dst_metric_locked(dst, RTAX_MTU) ||
 	    !forwarding)
 		return dst_mtu(dst);
 
-	/* 'forwarding = true' case should always honour route mtu */
-	mtu = dst_metric_raw(dst, RTAX_MTU);
-	if (mtu)
-		return mtu;
-
-	return min(READ_ONCE(dst->dev->mtu), IP_MAX_MTU);
+	return min(dst->dev->mtu, IP_MAX_MTU);
 }
 
 static inline unsigned int ip_skb_dst_mtu(const struct sk_buff *skb)
@@ -332,7 +319,7 @@ static inline unsigned int ip_skb_dst_mtu(const struct sk_buff *skb)
 		bool forwarding = IPCB(skb)->flags & IPSKB_FORWARDED;
 		return ip_dst_mtu_maybe_forward(skb_dst(skb), forwarding);
 	} else {
-		return min(READ_ONCE(skb_dst(skb)->dev->mtu), IP_MAX_MTU);
+		return min(skb_dst(skb)->dev->mtu, IP_MAX_MTU);
 	}
 }
 
@@ -497,16 +484,6 @@ enum ip_defrag_users {
 	IP_DEFRAG_AF_PACKET,
 	IP_DEFRAG_MACVLAN,
 };
-
-/* Return true if the value of 'user' is between 'lower_bond'
- * and 'upper_bond' inclusively.
- */
-static inline bool ip_defrag_user_in_between(u32 user,
-					     enum ip_defrag_users lower_bond,
-					     enum ip_defrag_users upper_bond)
-{
-	return user >= lower_bond && user <= upper_bond;
-}
 
 int ip_defrag(struct sk_buff *skb, u32 user);
 #ifdef CONFIG_INET
