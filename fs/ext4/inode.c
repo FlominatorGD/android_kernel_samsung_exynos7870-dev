@@ -74,9 +74,10 @@ static __u32 ext4_inode_csum(struct inode *inode, struct ext4_inode *raw,
 			csum = ext4_chksum(sbi, csum, (__u8 *)&dummy_csum,
 					   csum_size);
 			offset += csum_size;
+			csum = ext4_chksum(sbi, csum, (__u8 *)raw + offset,
+					   EXT4_INODE_SIZE(inode->i_sb) -
+					   offset);
 		}
-		csum = ext4_chksum(sbi, csum, (__u8 *)raw + offset,
-				   EXT4_INODE_SIZE(inode->i_sb) - offset);
 	}
 
 	return csum;
@@ -381,11 +382,17 @@ static int __check_block_validity(struct inode *inode, const char *func,
 				unsigned int line,
 				struct ext4_map_blocks *map)
 {
-	if (!ext4_inode_block_valid(inode, map->m_pblk, map->m_len)) {
+	if (!ext4_data_block_valid(EXT4_SB(inode->i_sb), map->m_pblk,
+				   map->m_len)) {
+		/* for debugging, sangwoo2.lee */
+		printk(KERN_ERR "printing inode..\n");
+		print_block_data(inode->i_sb, 0, (unsigned char *)inode,
+						0, EXT4_INODE_SIZE(inode->i_sb));
+		/* for debugging */
 		ext4_error_inode(inode, func, line, map->m_pblk,
-				 "lblock %lu mapped to illegal pblock %llu "
+				 "lblock %lu mapped to illegal pblock "
 				 "(length %d)", (unsigned long) map->m_lblk,
-				 map->m_pblk, map->m_len);
+				 map->m_len);
 		return -EIO;
 	}
 	return 0;
@@ -667,20 +674,6 @@ has_zeroout:
 		ret = check_block_validity(inode, map);
 		if (ret != 0)
 			return ret;
-
-		/*
-		 * Inodes with freshly allocated blocks where contents will be
-		 * visible after transaction commit must be on transaction's
-		 * ordered data list.
-		 */
-		if (map->m_flags & EXT4_MAP_NEW &&
-		    !(map->m_flags & EXT4_MAP_UNWRITTEN) &&
-		    !IS_NOQUOTA(inode) &&
-		    ext4_should_order_data(inode)) {
-			ret = ext4_jbd2_file_inode(handle, inode);
-			if (ret)
-				return ret;
-		}
 	}
 	return retval;
 }
@@ -1172,11 +1165,19 @@ static int ext4_write_end(struct file *file,
 	struct inode *inode = mapping->host;
 	int ret = 0, ret2;
 	int i_size_changed = 0;
-	int inline_data = ext4_has_inline_data(inode);
 
 	trace_android_fs_datawrite_end(inode, pos, len);
 	trace_ext4_write_end(inode, pos, len, copied);
-	if (inline_data) {
+	if (ext4_test_inode_state(inode, EXT4_STATE_ORDERED_MODE)) {
+		ret = ext4_jbd2_file_inode(handle, inode);
+		if (ret) {
+			unlock_page(page);
+			page_cache_release(page);
+			goto errout;
+		}
+	}
+
+	if (ext4_has_inline_data(inode)) {
 		ret = ext4_write_inline_data_end(inode, pos, len,
 						 copied, page);
 		if (ret < 0)
@@ -1199,7 +1200,7 @@ static int ext4_write_end(struct file *file,
 	 * ordering of page lock and transaction start for journaling
 	 * filesystems.
 	 */
-	if (i_size_changed || inline_data)
+	if (i_size_changed)
 		ext4_mark_inode_dirty(handle, inode);
 
 	if (pos + len > inode->i_size && ext4_can_truncate(inode))
@@ -1238,7 +1239,6 @@ static int ext4_journalled_write_end(struct file *file,
 	int partial = 0;
 	unsigned from, to;
 	int size_changed = 0;
-	int inline_data = ext4_has_inline_data(inode);
 
 	trace_android_fs_datawrite_end(inode, pos, len);
 	trace_ext4_journalled_write_end(inode, pos, len, copied);
@@ -1247,10 +1247,10 @@ static int ext4_journalled_write_end(struct file *file,
 
 	BUG_ON(!ext4_handle_valid(handle));
 
-	if (inline_data) {
+	if (ext4_has_inline_data(inode))
 		copied = ext4_write_inline_data_end(inode, pos, len,
 						    copied, page);
-	} else {
+	else {
 		if (copied < len) {
 			if (!PageUptodate(page))
 				copied = 0;
@@ -1268,7 +1268,7 @@ static int ext4_journalled_write_end(struct file *file,
 	unlock_page(page);
 	page_cache_release(page);
 
-	if (size_changed || inline_data) {
+	if (size_changed) {
 		ret2 = ext4_mark_inode_dirty(handle, inode);
 		if (!ret)
 			ret = ret2;
@@ -1330,7 +1330,9 @@ static int ext4_da_reserve_space(struct inode *inode, ext4_lblk_t lblock)
 	md_needed = 0;
 	trace_ext4_da_reserve_space(inode, 0);
 
-	if (ext4_claim_free_clusters(sbi, 1, 0)) {
+	if (ext4_claim_free_clusters(sbi, 1,
+			ext4_test_inode_flag(inode, EXT4_INODE_CORE_FILE) ?
+			EXT4_MB_USE_EXTRA_ROOT_BLOCKS : 0)) {
 		spin_unlock(&ei->i_block_reservation_lock);
 		dquot_release_reservation_block(inode, EXT4_C2B(sbi, 1));
 		return -ENOSPC;
@@ -1794,7 +1796,11 @@ static int __ext4_journalled_writepage(struct page *page,
 	}
 
 	if (inline_data) {
-		ret = ext4_mark_inode_dirty(handle, inode);
+		BUFFER_TRACE(inode_bh, "get write access");
+		ret = ext4_journal_get_write_access(handle, inode_bh);
+
+		err = ext4_handle_dirty_metadata(handle, inode, inode_bh);
+
 	} else {
 		ret = ext4_walk_page_buffers(handle, page_bufs, 0, len, NULL,
 					     do_journal_get_write_access);
@@ -1809,13 +1815,13 @@ static int __ext4_journalled_writepage(struct page *page,
 	if (!ret)
 		ret = err;
 
+	if (!ext4_has_inline_data(inode))
+		ext4_walk_page_buffers(NULL, page_bufs, 0, len,
+				       NULL, bput_one);
 	ext4_set_inode_state(inode, EXT4_STATE_JDATA);
 out:
 	unlock_page(page);
 out_no_pagelock:
-	if (!inline_data && page_bufs)
-		ext4_walk_page_buffers(NULL, page_bufs, 0, len,
-				       NULL, bput_one);
 	brelse(inode_bh);
 	return ret;
 }
@@ -3686,6 +3692,7 @@ int ext4_update_disksize_before_punch(struct inode *inode, loff_t offset,
 
 int ext4_punch_hole(struct inode *inode, loff_t offset, loff_t length)
 {
+#if 0
 	struct super_block *sb = inode->i_sb;
 	ext4_lblk_t first_block, stop_block;
 	struct address_space *mapping = inode->i_mapping;
@@ -3813,6 +3820,12 @@ out_dio:
 out_mutex:
 	mutex_unlock(&inode->i_mutex);
 	return ret;
+#else
+	/*
+	 * Disabled as per b/28760453
+	 */
+	return -EOPNOTSUPP;
+#endif
 }
 
 int ext4_inode_attach_jinode(struct inode *inode)
@@ -4218,8 +4231,10 @@ struct inode *ext4_iget(struct super_block *sb, unsigned long ino)
 	iloc.bh = NULL;
 
 	ret = __ext4_get_inode_loc(inode, &iloc, 0);
-	if (ret < 0)
+	if (ret < 0) {
+		print_iloc_info(sb,iloc);
 		goto bad_inode;
+	}
 	raw_inode = ext4_raw_inode(&iloc);
 
 	if ((ino == EXT4_ROOT_INO) && (raw_inode->i_links_count == 0)) {
@@ -4232,6 +4247,7 @@ struct inode *ext4_iget(struct super_block *sb, unsigned long ino)
 		ei->i_extra_isize = le16_to_cpu(raw_inode->i_extra_isize);
 		if (EXT4_GOOD_OLD_INODE_SIZE + ei->i_extra_isize >
 		    EXT4_INODE_SIZE(inode->i_sb)) {
+			print_iloc_info(sb,iloc);
 			EXT4_ERROR_INODE(inode, "bad extra_isize (%u != %u)",
 				EXT4_GOOD_OLD_INODE_SIZE + ei->i_extra_isize,
 				EXT4_INODE_SIZE(inode->i_sb));
@@ -4254,6 +4270,7 @@ struct inode *ext4_iget(struct super_block *sb, unsigned long ino)
 	}
 
 	if (!ext4_inode_csum_verify(inode, raw_inode, ei)) {
+		print_iloc_info(sb,iloc);
 		EXT4_ERROR_INODE(inode, "checksum invalid");
 		ret = -EIO;
 		goto bad_inode;
@@ -4285,6 +4302,7 @@ struct inode *ext4_iget(struct super_block *sb, unsigned long ino)
 		    ino != EXT4_BOOT_LOADER_INO) {
 			/* this inode is deleted */
 			ret = -ESTALE;
+			print_iloc_info(sb,iloc);
 			goto bad_inode;
 		}
 		/* The only unlinked inodes we let through here have
@@ -4372,7 +4390,8 @@ struct inode *ext4_iget(struct super_block *sb, unsigned long ino)
 
 	ret = 0;
 	if (ei->i_file_acl &&
-	    !ext4_inode_block_valid(inode, ei->i_file_acl, 1)) {
+	    !ext4_data_block_valid(EXT4_SB(sb), ei->i_file_acl, 1)) {
+		print_iloc_info(sb,iloc);
 		EXT4_ERROR_INODE(inode, "bad extended attribute block %llu",
 				 ei->i_file_acl);
 		ret = -EIO;
@@ -4391,8 +4410,10 @@ struct inode *ext4_iget(struct super_block *sb, unsigned long ino)
 			ret = ext4_ind_check_inode(inode);
 		}
 	}
-	if (ret)
+	if (ret) {
+		print_iloc_info(sb,iloc);
 		goto bad_inode;
+	}
 
 	if (S_ISREG(inode->i_mode)) {
 		inode->i_op = &ext4_file_inode_operations;
@@ -4425,6 +4446,7 @@ struct inode *ext4_iget(struct super_block *sb, unsigned long ino)
 		make_bad_inode(inode);
 	} else {
 		ret = -EIO;
+		print_iloc_info(sb,iloc);
 		EXT4_ERROR_INODE(inode, "bogus i_mode (%o)", inode->i_mode);
 		goto bad_inode;
 	}
@@ -4500,7 +4522,7 @@ static int ext4_do_update_inode(handle_t *handle,
 	struct ext4_inode_info *ei = EXT4_I(inode);
 	struct buffer_head *bh = iloc->bh;
 	struct super_block *sb = inode->i_sb;
-	int err = 0, block;
+	int err = 0, rc, block;
 	int need_datasync = 0, set_large_file = 0;
 	uid_t i_uid;
 	gid_t i_gid;
@@ -4600,9 +4622,9 @@ static int ext4_do_update_inode(handle_t *handle,
 	spin_unlock(&ei->i_raw_lock);
 
 	BUFFER_TRACE(bh, "call ext4_handle_dirty_metadata");
-	err = ext4_handle_dirty_metadata(handle, NULL, bh);
-	if (err)
-		goto out_brelse;
+	rc = ext4_handle_dirty_metadata(handle, NULL, bh);
+	if (!err)
+		err = rc;
 	ext4_clear_inode_state(inode, EXT4_STATE_NEW);
 	if (set_large_file) {
 		BUFFER_TRACE(EXT4_SB(sb)->s_sbh, "get write access");
@@ -5347,11 +5369,6 @@ int ext4_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 
 	sb_start_pagefault(inode->i_sb);
 	file_update_time(vma->vm_file);
-
-	ret = ext4_convert_inline_data(inode);
-	if (ret)
-		goto out_ret;
-
 	/* Delalloc case is easy... */
 	if (test_opt(inode->i_sb, DELALLOC) &&
 	    !ext4_should_journal_data(inode) &&
