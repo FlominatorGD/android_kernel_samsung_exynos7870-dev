@@ -25,7 +25,6 @@
 #include <linux/module.h>
 #include <asm/kvm_emulate.h>
 #include <linux/stringify.h>
-#include <asm/nospec-branch.h>
 
 #include "x86.h"
 #include "tss.h"
@@ -167,7 +166,6 @@
 #define CheckPerm   ((u64)1 << 49)  /* Has valid check_perm field */
 #define NoBigReal   ((u64)1 << 50)  /* No big real mode */
 #define PrivUD      ((u64)1 << 51)  /* #UD instead of #GP on CPL > 0 */
-#define Aligned16   ((u64)1 << 55)  /* Aligned to 16 byte boundary (e.g. FXSAVE) */
 
 #define DstXacc     (DstAccLo | SrcAccHi | SrcWrite)
 
@@ -421,26 +419,6 @@ FOP_END;
 FOP_START(salc) "pushf; sbb %al, %al; popf \n\t" FOP_RET
 FOP_END;
 
-/*
- * XXX: inoutclob user must know where the argument is being expanded.
- *      Relying on CC_HAVE_ASM_GOTO would allow us to remove _fault.
- */
-#define asm_safe(insn, inoutclob...) \
-({ \
-	int _fault = 0; \
- \
-	asm volatile("1:" insn "\n" \
-	             "2:\n" \
-	             ".pushsection .fixup, \"ax\"\n" \
-	             "3: movl $1, %[_fault]\n" \
-	             "   jmp  2b\n" \
-	             ".popsection\n" \
-	             _ASM_EXTABLE(1b, 3b) \
-	             : [_fault] "+qm"(_fault) inoutclob ); \
- \
-	_fault ? X86EMUL_UNHANDLEABLE : X86EMUL_CONTINUE; \
-})
-
 static int emulator_check_intercept(struct x86_emulate_ctxt *ctxt,
 				    enum x86_intercept intercept,
 				    enum x86_intercept_stage stage)
@@ -646,24 +624,21 @@ static void set_segment_selector(struct x86_emulate_ctxt *ctxt, u16 selector,
  * depending on whether they're AVX encoded or not.
  *
  * Also included is CMPXCHG16B which is not a vector instruction, yet it is
- * subject to the same check.  FXSAVE and FXRSTOR are checked here too as their
- * 512 bytes of data must be aligned to a 16 byte boundary.
+ * subject to the same check.
  */
-static unsigned insn_alignment(struct x86_emulate_ctxt *ctxt, unsigned size)
+static bool insn_aligned(struct x86_emulate_ctxt *ctxt, unsigned size)
 {
 	if (likely(size < 16))
-		return 1;
+		return false;
 
 	if (ctxt->d & Aligned)
-		return size;
+		return true;
 	else if (ctxt->d & Unaligned)
-		return 1;
+		return false;
 	else if (ctxt->d & Avx)
-		return 1;
-	else if (ctxt->d & Aligned16)
-		return 16;
+		return false;
 	else
-		return size;
+		return true;
 }
 
 static int __linearize(struct x86_emulate_ctxt *ctxt,
@@ -745,7 +720,7 @@ static int __linearize(struct x86_emulate_ctxt *ctxt,
 	}
 	if (fetch ? ctxt->mode != X86EMUL_MODE_PROT64 : ctxt->ad_bytes != 8)
 		la &= (u32)-1;
-	if (la & (insn_alignment(ctxt, size) - 1))
+	if (insn_aligned(ctxt, size) && ((la & (size - 1)) != 0))
 		return emulate_gp(ctxt, 0);
 	*linear = la;
 	return X86EMUL_CONTINUE;
@@ -944,8 +919,8 @@ static u8 test_cc(unsigned int condition, unsigned long flags)
 	void (*fop)(void) = (void *)em_setcc + 4 * (condition & 0xf);
 
 	flags = (flags & EFLAGS_MASK) | X86_EFLAGS_IF;
-	asm("push %[flags]; popf; " CALL_NOSPEC
-	    : "=a"(rc) : [thunk_target]"r"(fop), [flags]"r"(flags));
+	asm("push %[flags]; popf; call *%[fastop]"
+	    : "=a"(rc) : [fastop]"r"(fop), [flags]"r"(flags));
 	return rc;
 }
 
@@ -1495,6 +1470,7 @@ static int write_segment_descriptor(struct x86_emulate_ctxt *ctxt,
 				    &ctxt->exception);
 }
 
+/* Does not support long mode */
 static int __load_segment_descriptor(struct x86_emulate_ctxt *ctxt,
 				     u16 selector, int seg, u8 cpl,
 				     bool in_task_switch,
@@ -1531,34 +1507,20 @@ static int __load_segment_descriptor(struct x86_emulate_ctxt *ctxt,
 
 	rpl = selector & 3;
 
+	/* NULL selector is not valid for TR, CS and SS (except for long mode) */
+	if ((seg == VCPU_SREG_CS
+	     || (seg == VCPU_SREG_SS
+		 && (ctxt->mode != X86EMUL_MODE_PROT64 || rpl != cpl))
+	     || seg == VCPU_SREG_TR)
+	    && null_selector)
+		goto exception;
+
 	/* TR should be in GDT only */
 	if (seg == VCPU_SREG_TR && (selector & (1 << 2)))
 		goto exception;
 
-	/* NULL selector is not valid for TR, CS and (except for long mode) SS */
-	if (null_selector) {
-		if (seg == VCPU_SREG_CS || seg == VCPU_SREG_TR)
-			goto exception;
-
-		if (seg == VCPU_SREG_SS) {
-			if (ctxt->mode != X86EMUL_MODE_PROT64 || rpl != cpl)
-				goto exception;
-
-			/*
-			 * ctxt->ops->set_segment expects the CPL to be in
-			 * SS.DPL, so fake an expand-up 32-bit data segment.
-			 */
-			seg_desc.type = 3;
-			seg_desc.p = 1;
-			seg_desc.s = 1;
-			seg_desc.dpl = cpl;
-			seg_desc.d = 1;
-			seg_desc.g = 1;
-		}
-
-		/* Skip all following checks */
+	if (null_selector) /* for NULL selector skip all following checks */
 		goto load;
-	}
 
 	ret = read_segment_descriptor(ctxt, selector, &seg_desc, &desc_addr);
 	if (ret != X86EMUL_CONTINUE)
@@ -1664,21 +1626,6 @@ static int load_segment_descriptor(struct x86_emulate_ctxt *ctxt,
 				   u16 selector, int seg)
 {
 	u8 cpl = ctxt->ops->cpl(ctxt);
-
-	/*
-	 * None of MOV, POP and LSS can load a NULL selector in CPL=3, but
-	 * they can load it at CPL<3 (Intel's manual says only LSS can,
-	 * but it's wrong).
-	 *
-	 * However, the Intel manual says that putting IST=1/DPL=3 in
-	 * an interrupt gate will result in SS=3 (the AMD manual instead
-	 * says it doesn't), so allow SS=3 in __load_segment_descriptor
-	 * and only forbid it here.
-	 */
-	if (seg == VCPU_SREG_SS && selector == 3 &&
-	    ctxt->mode == X86EMUL_MODE_PROT64)
-		return emulate_exception(ctxt, GP_VECTOR, 0, true);
-
 	return __load_segment_descriptor(ctxt, selector, seg, cpl, false, NULL);
 }
 
@@ -2366,7 +2313,6 @@ static int em_syscall(struct x86_emulate_ctxt *ctxt)
 		ctxt->eflags &= ~(EFLG_VM | EFLG_IF);
 	}
 
-	ctxt->tf = (ctxt->eflags & X86_EFLAGS_TF) != 0;
 	return X86EMUL_CONTINUE;
 }
 
@@ -3524,12 +3470,6 @@ static int em_clflush(struct x86_emulate_ctxt *ctxt)
 	return X86EMUL_CONTINUE;
 }
 
-static int em_clflushopt(struct x86_emulate_ctxt *ctxt)
-{
-	/* emulating clflushopt regardless of cpuid */
-	return X86EMUL_CONTINUE;
-}
-
 static bool valid_cr(int nr)
 {
 	switch (nr) {
@@ -3869,7 +3809,7 @@ static const struct opcode group11[] = {
 };
 
 static const struct gprefix pfx_0f_ae_7 = {
-	I(SrcMem | ByteOp, em_clflush), I(SrcMem | ByteOp, em_clflushopt), N, N,
+	I(SrcMem | ByteOp, em_clflush), N, N, N,
 };
 
 static const struct group_dual group15 = { {
@@ -4723,13 +4663,21 @@ static bool string_insn_completed(struct x86_emulate_ctxt *ctxt)
 
 static int flush_pending_x87_faults(struct x86_emulate_ctxt *ctxt)
 {
-	int rc;
+	bool fault = false;
 
 	ctxt->ops->get_fpu(ctxt);
-	rc = asm_safe("fwait");
+	asm volatile("1: fwait \n\t"
+		     "2: \n\t"
+		     ".pushsection .fixup,\"ax\" \n\t"
+		     "3: \n\t"
+		     "movb $1, %[fault] \n\t"
+		     "jmp 2b \n\t"
+		     ".popsection \n\t"
+		     _ASM_EXTABLE(1b, 3b)
+		     : [fault]"+qm"(fault));
 	ctxt->ops->put_fpu(ctxt);
 
-	if (unlikely(rc != X86EMUL_CONTINUE))
+	if (unlikely(fault))
 		return emulate_exception(ctxt, MF_VECTOR, 0, false);
 
 	return X86EMUL_CONTINUE;
@@ -4747,9 +4695,9 @@ static int fastop(struct x86_emulate_ctxt *ctxt, void (*fop)(struct fastop *))
 	ulong flags = (ctxt->eflags & EFLAGS_MASK) | X86_EFLAGS_IF;
 	if (!(ctxt->d & ByteOp))
 		fop += __ffs(ctxt->dst.bytes) * FASTOP_SIZE;
-	asm("push %[flags]; popf; " CALL_NOSPEC "; pushf; pop %[flags]\n"
+	asm("push %[flags]; popf; call *%[fastop]; pushf; pop %[flags]\n"
 	    : "+a"(ctxt->dst.val), "+d"(ctxt->src.val), [flags]"+D"(flags),
-	      [thunk_target]"+S"(fop)
+	      [fastop]"+S"(fop)
 	    : "c"(ctxt->src2.val));
 	ctxt->eflags = (ctxt->eflags & ~EFLAGS_MASK) | (flags & EFLAGS_MASK);
 	if (!fop) /* exception is returned in fop variable */
