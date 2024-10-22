@@ -44,7 +44,7 @@ typedef unsigned char	__u8;
 struct devtable {
 	const char *device_id; /* name of table, __mod_<name>__*_device_table. */
 	unsigned long id_size;
-	int (*do_entry)(const char *filename, void *symval, char *alias);
+	void *function;
 };
 
 /* Define a variable f that holds the value of field f of struct devid
@@ -1031,6 +1031,7 @@ static int do_amba_entry(const char *filename,
 	return 1;
 }
 
+
 /* LOOKS like cpu:type:x86,venVVVVfamFFFFmodMMMM:feature:*,FEAT,*
  * All fields are numbers. It would be nicer to use strings for vendor
  * and feature, but getting those out of the build system here is too
@@ -1094,6 +1095,7 @@ static int do_rio_entry(const char *filename,
 	return 1;
 }
 
+
 /* Does namelen bytes of name exactly match the symbol? */
 static bool sym_is(const char *name, unsigned namelen, const char *symbol)
 {
@@ -1106,11 +1108,12 @@ static bool sym_is(const char *name, unsigned namelen, const char *symbol)
 static void do_table(void *symval, unsigned long size,
 		     unsigned long id_size,
 		     const char *device_id,
-		     int (*do_entry)(const char *filename, void *symval, char *alias),
+		     void *function,
 		     struct module *mod)
 {
 	unsigned int i;
 	char alias[500];
+	int (*do_entry)(const char *, void *entry, char *alias) = function;
 
 	device_id_check(mod->name, device_id, size, id_size, symval);
 	/* Leave last one: it's the terminator. */
@@ -1150,13 +1153,8 @@ static const struct devtable devtable[] = {
 	{"mdio", SIZE_mdio_device_id, do_mdio_entry},
 	{"zorro", SIZE_zorro_device_id, do_zorro_entry},
 	{"isapnp", SIZE_isapnp_device_id, do_isapnp_entry},
-	{"ipack", SIZE_ipack_device_id, do_ipack_entry},
 	{"amba", SIZE_amba_id, do_amba_entry},
 	{"x86cpu", SIZE_x86_cpu_id, do_x86cpu_entry},
-	{"cpu", SIZE_cpu_feature, do_cpu_entry},
-	{"mei", SIZE_mei_cl_device_id, do_mei_entry},
-	{"rapidio", SIZE_rio_device_id, do_rio_entry},
-	{"of", SIZE_of_device_id, do_of_entry},
 };
 
 /* Create MODULE_ALIAS() statements.
@@ -1218,7 +1216,7 @@ void handle_moddevtable(struct module *mod, struct elf_info *info,
 
 			if (sym_is(name, namelen, p->device_id)) {
 				do_table(symval, sym->st_size, p->id_size,
-					 p->device_id, p->do_entry, mod);
+					 p->device_id, p->function, mod);
 				break;
 			}
 		}
