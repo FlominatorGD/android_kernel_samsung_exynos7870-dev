@@ -387,8 +387,7 @@ struct qdisc_rate_table *qdisc_get_rtab(struct tc_ratespec *r, struct nlattr *ta
 {
 	struct qdisc_rate_table *rtab;
 
-	if (tab == NULL || r->rate == 0 ||
-	    r->cell_log == 0 || r->cell_log >= 32 ||
+	if (tab == NULL || r->rate == 0 || r->cell_log == 0 ||
 	    nla_len(tab) != TC_RTAB_SIZE)
 		return NULL;
 
@@ -996,9 +995,6 @@ qdisc_create(struct net_device *dev, struct netdev_queue *dev_queue,
 
 		return sch;
 	}
-	/* ops->init() failed, we call ->destroy() like qdisc_create_dflt() */
-	if (ops->destroy)
-		ops->destroy(sch);
 err_out3:
 	dev_put(dev);
 	kfree((char *) sch - sch->padded);
@@ -1166,6 +1162,35 @@ static int tc_get_qdisc(struct sk_buff *skb, struct nlmsghdr *n)
 	}
 	return 0;
 }
+
+/*
+ * enable/disable flow on qdisc.
+ */
+void
+tc_qdisc_flow_control(struct net_device *dev, u32 tcm_handle, int enable_flow)
+{
+	struct Qdisc *q;
+	struct __qdisc_change_req {
+		struct nlattr attr;
+		struct tc_prio_qopt data;
+	} req =	{
+		.attr = {sizeof(struct __qdisc_change_req), TCA_OPTIONS},
+		.data = {3, {1, 2, 2, 2, 1, 2, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1}, 1}
+		};
+
+	/* override flow bit */
+	req.data.enable_flow = enable_flow;
+
+	/* look up using tcm handle */
+	q = qdisc_lookup(dev, tcm_handle);
+
+	/* call registered change function */
+	if (q) {
+		if (q->ops->change(q, &(req.attr)) != 0)
+			pr_err("tc_qdisc_flow_control: qdisc change failed");
+	}
+}
+EXPORT_SYMBOL(tc_qdisc_flow_control);
 
 /*
  * Create/change qdisc.
@@ -1815,11 +1840,10 @@ done:
 int tc_classify_compat(struct sk_buff *skb, const struct tcf_proto *tp,
 		       struct tcf_result *res)
 {
+	__be16 protocol = skb->protocol;
 	int err;
 
 	for (; tp; tp = rcu_dereference_bh(tp->next)) {
-		__be16 protocol = skb->protocol;
-
 		if (tp->protocol != protocol &&
 		    tp->protocol != htons(ETH_P_ALL))
 			continue;
