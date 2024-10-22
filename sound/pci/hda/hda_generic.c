@@ -715,16 +715,6 @@ static void activate_amp(struct hda_codec *codec, hda_nid_t nid, int dir,
 	update_amp(codec, nid, dir, idx, mask, val);
 }
 
-static void check_and_activate_amp(struct hda_codec *codec, hda_nid_t nid,
-				   int dir, int idx, int idx_to_check,
-				   bool enable)
-{
-	/* check whether the given amp is still used by others */
-	if (!enable && is_active_nid(codec, nid, dir, idx_to_check))
-		return;
-	activate_amp(codec, nid, dir, idx, idx_to_check, enable);
-}
-
 static void activate_amp_out(struct hda_codec *codec, struct nid_path *path,
 			     int i, bool enable)
 {
@@ -1235,20 +1225,16 @@ static int try_assign_dacs(struct hda_codec *codec, int num_outs,
 		struct nid_path *path;
 		hda_nid_t pin = pins[i];
 
-		if (!spec->obey_preferred_dacs) {
-			path = snd_hda_get_path_from_idx(codec, path_idx[i]);
-			if (path) {
-				badness += assign_out_path_ctls(codec, path);
-				continue;
-			}
+		path = snd_hda_get_path_from_idx(codec, path_idx[i]);
+		if (path) {
+			badness += assign_out_path_ctls(codec, path);
+			continue;
 		}
 
 		dacs[i] = get_preferred_dac(codec, pin);
 		if (dacs[i]) {
 			if (is_dac_already_used(codec, dacs[i]))
 				badness += bad->shared_primary;
-		} else if (spec->obey_preferred_dacs) {
-			badness += BAD_NO_PRIMARY_DAC;
 		}
 
 		if (!dacs[i])
@@ -5396,8 +5382,7 @@ int snd_hda_gen_init(struct hda_codec *codec)
 	if (spec->init_hook)
 		spec->init_hook(codec);
 
-	if (!spec->skip_verbs)
-		snd_hda_apply_verbs(codec);
+	snd_hda_apply_verbs(codec);
 
 	codec->cached_write = 1;
 
@@ -5479,7 +5464,7 @@ int snd_hda_parse_generic_codec(struct hda_codec *codec)
 
 	err = snd_hda_parse_pin_defcfg(codec, &spec->autocfg, NULL, 0);
 	if (err < 0)
-		goto error;
+		return err;
 
 	err = snd_hda_gen_parse_auto_config(codec, &spec->autocfg);
 	if (err < 0)
