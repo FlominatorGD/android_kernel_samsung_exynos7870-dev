@@ -862,8 +862,6 @@ static int ax25_create(struct net *net, struct socket *sock, int protocol,
 		break;
 
 	case SOCK_RAW:
-		if (!capable(CAP_NET_RAW))
-			return -EPERM;
 		break;
 	default:
 		return -ESOCKTNOSUPPORT;
@@ -1192,10 +1190,7 @@ static int __must_check ax25_connect(struct socket *sock,
 	if (addr_len > sizeof(struct sockaddr_ax25) &&
 	    fsa->fsa_ax25.sax25_ndigis != 0) {
 		/* Valid number of digipeaters ? */
-		if (fsa->fsa_ax25.sax25_ndigis < 1 ||
-		    fsa->fsa_ax25.sax25_ndigis > AX25_MAX_DIGIS ||
-		    addr_len < sizeof(struct sockaddr_ax25) +
-		    sizeof(ax25_address) * fsa->fsa_ax25.sax25_ndigis) {
+		if (fsa->fsa_ax25.sax25_ndigis < 1 || fsa->fsa_ax25.sax25_ndigis > AX25_MAX_DIGIS) {
 			err = -EINVAL;
 			goto out_release;
 		}
@@ -1515,10 +1510,7 @@ static int ax25_sendmsg(struct kiocb *iocb, struct socket *sock,
 			struct full_sockaddr_ax25 *fsa = (struct full_sockaddr_ax25 *)usax;
 
 			/* Valid number of digipeaters ? */
-			if (usax->sax25_ndigis < 1 ||
-			    usax->sax25_ndigis > AX25_MAX_DIGIS ||
-			    addr_len < sizeof(struct sockaddr_ax25) +
-			    sizeof(ax25_address) * usax->sax25_ndigis) {
+			if (usax->sax25_ndigis < 1 || usax->sax25_ndigis > AX25_MAX_DIGIS) {
 				err = -EINVAL;
 				goto out;
 			}
