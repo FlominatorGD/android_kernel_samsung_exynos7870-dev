@@ -659,7 +659,8 @@ static int uas_queuecommand_lck(struct scsi_cmnd *cmnd,
 	if (devinfo->resetting) {
 		cmnd->result = DID_ERROR << 16;
 		cmnd->scsi_done(cmnd);
-		goto zombie;
+		spin_unlock_irqrestore(&devinfo->lock, flags);
+		return 0;
 	}
 
 	stream = uas_get_tag(cmnd);
@@ -692,16 +693,6 @@ static int uas_queuecommand_lck(struct scsi_cmnd *cmnd,
 	}
 
 	err = uas_submit_urbs(cmnd, devinfo, GFP_ATOMIC);
-	/*
-	 * in case of fatal errors the SCSI layer is peculiar
-	 * a command that has finished is a success for the purpose
-	 * of queueing, no matter how fatal the error
-	 */
-	if (err == -ENODEV) {
-		cmnd->result = DID_ERROR << 16;
-		cmnd->scsi_done(cmnd);
-		goto zombie;
-	}
 	if (err) {
 		/* If we did nothing, give up now */
 		if (cmdinfo->state & SUBMIT_STATUS_URB) {
@@ -712,7 +703,6 @@ static int uas_queuecommand_lck(struct scsi_cmnd *cmnd,
 	}
 
 	devinfo->cmnd[stream - 1] = cmnd;
-zombie:
 	spin_unlock_irqrestore(&devinfo->lock, flags);
 	return 0;
 }
@@ -908,14 +898,15 @@ MODULE_DEVICE_TABLE(usb, uas_usb_ids);
 static int uas_switch_interface(struct usb_device *udev,
 				struct usb_interface *intf)
 {
-	struct usb_host_interface *alt;
+	struct usb_host_interface *alt; 
 
 	alt = uas_find_uas_alt_setting(intf);
-	if (!alt)
-		return -ENODEV;
+	if (!alt)  
+		return -ENODEV;  
 
-	return usb_set_interface(udev, alt->desc.bInterfaceNumber,
-			alt->desc.bAlternateSetting);
+	return usb_set_interface(udev, alt->desc.bInterfaceNumber,  
+			alt->desc.bAlternateSetting);  
+
 }
 
 static int uas_configure_endpoints(struct uas_dev_info *devinfo)
