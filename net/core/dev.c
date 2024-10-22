@@ -2572,9 +2572,9 @@ static netdev_features_t harmonize_features(struct sk_buff *skb,
 	if (skb->ip_summed != CHECKSUM_NONE &&
 	    !can_checksum_protocol(features, type)) {
 		features &= ~NETIF_F_ALL_CSUM;
-	}
-	if (illegal_highdma(skb->dev, skb))
+	} else if (illegal_highdma(skb->dev, skb)) {
 		features &= ~NETIF_F_SG;
+	}
 
 	return features;
 }
@@ -4010,9 +4010,7 @@ static void skb_gro_reset_offset(struct sk_buff *skb)
 	    pinfo->nr_frags &&
 	    !PageHighMem(skb_frag_page(frag0))) {
 		NAPI_GRO_CB(skb)->frag0 = skb_frag_address(frag0);
-		NAPI_GRO_CB(skb)->frag0_len = min_t(unsigned int,
-						    skb_frag_size(frag0),
-						    skb->end - skb->tail);
+		NAPI_GRO_CB(skb)->frag0_len = skb_frag_size(frag0);
 	}
 }
 
@@ -4172,11 +4170,6 @@ struct packet_offload *gro_find_complete_by_type(__be16 type)
 }
 EXPORT_SYMBOL(gro_find_complete_by_type);
 
-static void napi_skb_free_stolen_head(struct sk_buff *skb)
-{
-	kmem_cache_free(skbuff_head_cache, skb);
-}
-
 static gro_result_t napi_skb_finish(gro_result_t ret, struct sk_buff *skb)
 {
 	switch (ret) {
@@ -4191,7 +4184,7 @@ static gro_result_t napi_skb_finish(gro_result_t ret, struct sk_buff *skb)
 
 	case GRO_MERGED_FREE:
 		if (NAPI_GRO_CB(skb)->free == NAPI_GRO_FREE_STOLEN_HEAD)
-			napi_skb_free_stolen_head(skb);
+			kmem_cache_free(skbuff_head_cache, skb);
 		else
 			__kfree_skb(skb);
 		break;
@@ -4263,14 +4256,8 @@ static gro_result_t napi_frags_finish(struct napi_struct *napi,
 		break;
 
 	case GRO_DROP:
-		napi_reuse_skb(napi, skb);
-		break;
-
 	case GRO_MERGED_FREE:
-		if (NAPI_GRO_CB(skb)->free == NAPI_GRO_FREE_STOLEN_HEAD)
-			napi_skb_free_stolen_head(skb);
-		else
-			napi_reuse_skb(napi, skb);
+		napi_reuse_skb(napi, skb);
 		break;
 
 	case GRO_MERGED:
@@ -4552,14 +4539,13 @@ void netif_napi_add(struct net_device *dev, struct napi_struct *napi,
 		pr_err_once("netif_napi_add() called with weight %d on device %s\n",
 			    weight, dev->name);
 	napi->weight = weight;
+	list_add(&napi->dev_list, &dev->napi_list);
 	napi->dev = dev;
 #ifdef CONFIG_NETPOLL
 	spin_lock_init(&napi->poll_lock);
 	napi->poll_owner = -1;
 #endif
 	set_bit(NAPI_STATE_SCHED, &napi->state);
-	set_bit(NAPI_STATE_NPSVC, &napi->state);
-	list_add_rcu(&napi->dev_list, &dev->napi_list);
 }
 EXPORT_SYMBOL(netif_napi_add);
 
@@ -6347,8 +6333,6 @@ int register_netdevice(struct net_device *dev)
 	ret = notifier_to_errno(ret);
 	if (ret) {
 		rollback_registered(dev);
-		rcu_barrier();
-
 		dev->reg_state = NETREG_UNREGISTERED;
 		/* We should put the kobject that hold in
 		 * netdev_unregister_kobject(), otherwise
@@ -7276,13 +7260,11 @@ static void __net_exit default_device_exit(struct net *net)
 			continue;
 
 		/* Leave virtual devices for the generic cleanup */
-		if (dev->rtnl_link_ops && !dev->rtnl_link_ops->netns_refund)
+		if (dev->rtnl_link_ops)
 			continue;
 
 		/* Push remaining network devices to init_net */
 		snprintf(fb_name, IFNAMSIZ, "dev%d", dev->ifindex);
-		if (__dev_get_by_name(&init_net, fb_name))
-			snprintf(fb_name, IFNAMSIZ, "dev%%d");
 		err = dev_change_net_namespace(dev, &init_net, fb_name);
 		if (err) {
 			pr_emerg("%s: failed to move %s to init_net: %d\n",
