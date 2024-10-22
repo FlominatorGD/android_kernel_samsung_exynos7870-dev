@@ -154,11 +154,11 @@ config HID_CHERRY
 	Support for Cherry Cymotion keyboard.
 
 config HID_CHICONY
-	tristate "Chicony devices" if EXPERT
+	tristate "Chicony Tactical pad" if EXPERT
 	depends on HID
 	default !EXPERT
 	---help---
-	Support for Chicony Tactical pad and special keys on Chicony keyboards.
+	Support for Chicony Tactical pad.
 
 config HID_PRODIKEYS
 	tristate "Prodikeys PC-MIDI Keyboard support"
@@ -745,6 +745,13 @@ config SMARTJOYPLUS_FF
 	---help---
 	Say Y here if you have a SmartJoy PLUS PS2/USB adapter and want to
 	enable force feedback support for it.
+
+config HID_SYNAPTICS_BT
+	tristate "HID Synaptics"
+	depends on HID
+	default n
+	---help---
+	For a Bluetooth HID touchpad
 
 config HID_TIVO
 	tristate "TiVo Slide Bluetooth remote control support"
