@@ -138,9 +138,6 @@ static int mmc_decode_csd(struct mmc_card *card)
 			csd->erase_size = UNSTUFF_BITS(resp, 39, 7) + 1;
 			csd->erase_size <<= csd->write_blkbits - 9;
 		}
-
-		if (UNSTUFF_BITS(resp, 13, 1))
-			mmc_card_set_readonly(card);
 		break;
 	case 1:
 		/*
@@ -175,9 +172,6 @@ static int mmc_decode_csd(struct mmc_card *card)
 		csd->write_blkbits = 9;
 		csd->write_partial = 0;
 		csd->erase_size = 1;
-
-		if (UNSTUFF_BITS(resp, 13, 1))
-			mmc_card_set_readonly(card);
 		break;
 	default:
 		pr_err("%s: unrecognised CSD structure version %d\n",
@@ -222,14 +216,6 @@ static int mmc_decode_scr(struct mmc_card *card)
 
 	if (scr->sda_spec3)
 		scr->cmds = UNSTUFF_BITS(resp, 32, 2);
-
-	/* SD Spec says: any SD Card shall set at least bits 0 and 2 */
-	if (!(scr->bus_widths & SD_SCR_BUS_WIDTH_1) ||
-	    !(scr->bus_widths & SD_SCR_BUS_WIDTH_4)) {
-		pr_err("%s: invalid bus width\n", mmc_hostname(card->host));
-		return -EINVAL;
-	}
-
 	return 0;
 }
 
@@ -690,8 +676,23 @@ static int mmc_sd_init_uhs_card(struct mmc_card *card)
 		(card->host->ios.timing == MMC_TIMING_UHS_SDR50 ||
 		 card->host->ios.timing == MMC_TIMING_UHS_DDR50 ||
 		 card->host->ios.timing == MMC_TIMING_UHS_SDR104)) {
-		err = mmc_execute_tuning(card);
+		if (card->raw_cid[0] == abnormal_sd_cid0
+				&& card->raw_cid[1] == abnormal_sd_cid1) {
+			pr_warn("%s: abnormal mmc card(cid = %x%x)\n",
+					mmc_hostname(card->host),
+					abnormal_sd_cid0, abnormal_sd_cid1);
 
+			if (card->sw_caps.uhs_max_dtr == UHS_SDR104_MAX_DTR)
+				card->sw_caps.uhs_max_dtr = UHS_SDR50_MAX_DTR;
+			else if (card->sw_caps.uhs_max_dtr == UHS_SDR50_MAX_DTR)
+				card->sw_caps.uhs_max_dtr = UHS_SDR25_MAX_DTR;
+			else if (card->sw_caps.uhs_max_dtr == UHS_SDR25_MAX_DTR)
+				card->sw_caps.uhs_max_dtr = UHS_SDR12_MAX_DTR;
+
+			mmc_set_clock(card->host, card->sw_caps.uhs_max_dtr);
+		}
+
+		err = mmc_execute_tuning(card);
 		/*
 		 * As SD Specifications Part1 Physical Layer Specification
 		 * Version 3.01 says, CMD19 tuning is available for unlocked
@@ -1104,7 +1105,28 @@ static void mmc_sd_detect(struct mmc_host *host)
 	BUG_ON(!host);
 	BUG_ON(!host->card);
 
-	mmc_get_card(host->card);
+	if (host->ops->get_cd && host->ops->get_cd(host) == 0) {
+		mmc_card_set_removed(host->card);
+		mmc_sd_remove(host);
+		mmc_claim_host(host);
+		mmc_detach_bus(host);
+		mmc_power_off(host);
+		mmc_release_host(host);
+		pr_err("%s: card(tray) removed...\n", __func__);
+		return;
+	}
+
+	/*
+	 * Try to acquire claim host. If failed to get the lock in 2 sec,
+	 * just return; This is to ensure that when this call is invoked
+	 * due to pm_suspend, not to block suspend for longer duration.
+	 */
+	pm_runtime_get_sync(&host->card->dev);
+	if (!mmc_try_claim_host(host, 2000)) {
+		pm_runtime_mark_last_busy(&host->card->dev);
+		pm_runtime_put_autosuspend(&host->card->dev);
+		return;
+	}
 
 	/*
 	 * Just check if our card has been removed.
@@ -1332,12 +1354,6 @@ int mmc_attach_sd(struct mmc_host *host)
 		if (err)
 			goto err;
 	}
-
-	/*
-	 * Some SD cards claims an out of spec VDD voltage range. Let's treat
-	 * these bits as being in-valid and especially also bit7.
-	 */
-	ocr &= ~0x7FFF;
 
 	rocr = mmc_select_voltage(host, ocr);
 
