@@ -4344,14 +4344,13 @@ static void pretty_print(struct trace_seq *s, void *data, int size, struct event
 				else
 					ls = 2;
 
-				if (isalnum(ptr[1]))
+				if (*(ptr+1) == 'F' ||
+				    *(ptr+1) == 'f') {
 					ptr++;
-
-				if (*ptr == 'F' || *ptr == 'f' ||
-				    *ptr == 'S' || *ptr == 's') {
 					show_func = *ptr;
-				} else if (*ptr == 'M' || *ptr == 'm') {
-					print_mac_arg(s, *ptr, data, size, event, arg);
+				} else if (*(ptr+1) == 'M' || *(ptr+1) == 'm') {
+					print_mac_arg(s, *(ptr+1), data, size, event, arg);
+					ptr++;
 					arg = arg->next;
 					break;
 				}
