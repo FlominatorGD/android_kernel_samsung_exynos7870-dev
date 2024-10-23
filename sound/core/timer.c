@@ -282,9 +282,10 @@ int snd_timer_open(struct snd_timer_instance **ti,
 		return -ENODEV;
 	}
 	if (!list_empty(&timer->open_list_head)) {
-		timeri = list_entry(timer->open_list_head.next,
+		struct snd_timer_instance *t =
+			list_entry(timer->open_list_head.next,
 				    struct snd_timer_instance, open_list);
-		if (timeri->flags & SNDRV_TIMER_IFLG_EXCLUSIVE) {
+		if (t->flags & SNDRV_TIMER_IFLG_EXCLUSIVE) {
 			mutex_unlock(&register_mutex);
 			return -EBUSY;
 		}
@@ -432,10 +433,9 @@ static void snd_timer_notify1(struct snd_timer_instance *ti, int event)
 		return;
 	if (timer->hw.flags & SNDRV_TIMER_HW_SLAVE)
 		return;
-	event += 10; /* convert to SNDRV_TIMER_EVENT_MXXX */
 	list_for_each_entry(ts, &ti->slave_active_head, active_list)
 		if (ts->ccallback)
-			ts->ccallback(ts, event, &tstamp, resolution);
+			ts->ccallback(ts, event + 100, &tstamp, resolution);
 }
 
 /* start/continue a master timer */
@@ -556,7 +556,7 @@ static int snd_timer_stop1(struct snd_timer_instance *timeri, bool stop)
 	else
 		timeri->flags |= SNDRV_TIMER_IFLG_PAUSED;
 	snd_timer_notify1(timeri, stop ? SNDRV_TIMER_EVENT_STOP :
-			  SNDRV_TIMER_EVENT_PAUSE);
+			  SNDRV_TIMER_EVENT_CONTINUE);
  unlock:
 	spin_unlock_irqrestore(&timer->lock, flags);
 	return result;
@@ -578,7 +578,7 @@ static int snd_timer_stop_slave(struct snd_timer_instance *timeri, bool stop)
 		list_del_init(&timeri->ack_list);
 		list_del_init(&timeri->active_list);
 		snd_timer_notify1(timeri, stop ? SNDRV_TIMER_EVENT_STOP :
-				  SNDRV_TIMER_EVENT_PAUSE);
+				  SNDRV_TIMER_EVENT_CONTINUE);
 		spin_unlock(&timeri->timer->lock);
 	}
 	spin_unlock_irqrestore(&slave_active_lock, flags);
@@ -1701,21 +1701,9 @@ static int snd_timer_user_params(struct file *file,
 		return -EBADFD;
 	if (copy_from_user(&params, _params, sizeof(params)))
 		return -EFAULT;
-	if (!(t->hw.flags & SNDRV_TIMER_HW_SLAVE)) {
-		u64 resolution;
-
-		if (params.ticks < 1) {
-			err = -EINVAL;
-			goto _end;
-		}
-
-		/* Don't allow resolution less than 1ms */
-		resolution = snd_timer_resolution(tu->timeri);
-		resolution *= params.ticks;
-		if (resolution < 1000000) {
-			err = -EINVAL;
-			goto _end;
-		}
+	if (!(t->hw.flags & SNDRV_TIMER_HW_SLAVE) && params.ticks < 1) {
+		err = -EINVAL;
+		goto _end;
 	}
 	if (params.queue_size > 0 &&
 	    (params.queue_size < 32 || params.queue_size > 1024)) {
