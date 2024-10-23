@@ -195,9 +195,6 @@ static ssize_t regmap_read_debugfs(struct regmap *map, unsigned int from,
 	if (*ppos < 0 || !count)
 		return -EINVAL;
 
-	if (count > (PAGE_SIZE << (MAX_ORDER - 1)))
-		count = PAGE_SIZE << (MAX_ORDER - 1);
-
 	buf = kmalloc(count, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
@@ -344,9 +341,6 @@ static ssize_t regmap_reg_ranges_read_file(struct file *file,
 
 	if (*ppos < 0 || !count)
 		return -EINVAL;
-
-	if (count > (PAGE_SIZE << (MAX_ORDER - 1)))
-		count = PAGE_SIZE << (MAX_ORDER - 1);
 
 	buf = kmalloc(count, GFP_KERNEL);
 	if (!buf)
@@ -526,7 +520,7 @@ void regmap_debugfs_init(struct regmap *map, const char *name)
 		if (IS_ENABLED(REGMAP_ALLOW_WRITE_DEBUGFS))
 			registers_mode = 0600;
 		else
-			registers_mode = 0400;
+			registers_mode = 0404;
 
 		debugfs_create_file("registers", registers_mode, map->debugfs,
 				    map, &regmap_map_fops);
