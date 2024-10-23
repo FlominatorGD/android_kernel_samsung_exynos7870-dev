@@ -42,7 +42,6 @@
 #include <linux/sched/sysctl.h>
 #include <linux/slab.h>
 #include <linux/compat.h>
-#include <linux/random.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -1153,7 +1152,9 @@ static void call_timer_fn(struct timer_list *timer, void (*fn)(unsigned long),
 	lock_map_acquire(&lockdep_map);
 
 	trace_timer_expire_entry(timer);
+	exynos_ss_irq(ESS_FLAG_CALL_TIMER_FN, fn, irqs_disabled(), ESS_FLAG_IN);
 	fn(data);
+	exynos_ss_irq(ESS_FLAG_CALL_TIMER_FN, fn, irqs_disabled(), ESS_FLAG_OUT);
 	trace_timer_expire_exit(timer);
 
 	lock_map_release(&lockdep_map);
@@ -1404,13 +1405,6 @@ void update_process_times(int user_tick)
 #endif
 	scheduler_tick();
 	run_posix_cpu_timers(p);
-
-	/* The current CPU might make use of net randoms without receiving IRQs
-	 * to renew them often enough. Let's update the net_rand_state from a
-	 * non-constant value that's not affine to the number of calls to make
-	 * sure it's updated when there's some activity (we don't care in idle).
-	 */
-	this_cpu_add(net_rand_state.s1, rol32(jiffies, 24) + user_tick);
 }
 
 /*
