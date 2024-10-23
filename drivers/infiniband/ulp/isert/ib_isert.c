@@ -921,6 +921,14 @@ out:
 	return 0;
 }
 
+static void
+isert_connect_error(struct rdma_cm_id *cma_id)
+{
+	struct isert_conn *isert_conn = cma_id->qp->qp_context;
+
+	isert_put_conn(isert_conn);
+}
+
 static int
 isert_connect_error(struct rdma_cm_id *cma_id)
 {
@@ -1564,7 +1572,7 @@ static void
 isert_rx_completion(struct iser_rx_desc *desc, struct isert_conn *isert_conn,
 		    unsigned long xfer_len)
 {
-	struct ib_device *ib_dev = isert_conn->conn_device->ib_device;
+	struct ib_device *ib_dev = isert_conn->conn_cm_id->device;
 	struct iscsi_hdr *hdr;
 	u64 rx_dma;
 	int rx_buflen, outstanding;
