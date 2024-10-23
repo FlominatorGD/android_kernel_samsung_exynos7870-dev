@@ -838,7 +838,8 @@ ext2_xattr_cache_insert(struct buffer_head *bh)
 	if (error) {
 		mb_cache_entry_free(ce);
 		if (error == -EBUSY) {
-			ea_bdebug(bh, "already in cache");
+			ea_bdebug(bh, "already in cache (%d cache entries)",
+				atomic_read(&ext2_xattr_cache->c_entry_count));
 			error = 0;
 		}
 	} else {
