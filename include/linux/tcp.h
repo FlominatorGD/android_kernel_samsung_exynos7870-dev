@@ -61,13 +61,8 @@ static inline unsigned int tcp_optlen(const struct sk_buff *skb)
 
 /* TCP Fast Open Cookie as stored in memory */
 struct tcp_fastopen_cookie {
-	union {
-		u8	val[TCP_FASTOPEN_COOKIE_MAX];
-#if IS_ENABLED(CONFIG_IPV6)
-		struct in6_addr addr;
-#endif
-	};
 	s8	len;
+	u8	val[TCP_FASTOPEN_COOKIE_MAX];
 };
 
 /* This defines a selective acknowledgement block. */
@@ -250,9 +245,10 @@ struct tcp_sock {
 	struct sk_buff* lost_skb_hint;
 	struct sk_buff *retransmit_skb_hint;
 
-	/* OOO segments go in this rbtree. Socket lock must be held. */
-	struct rb_root	out_of_order_queue;
-	struct sk_buff	*ooo_last_skb; /* cache rb_last(out_of_order_queue) */
+	/* OOO segments go in this list. Note that socket lock must be held,
+	 * as we do not use sk_buff_head lock.
+	 */
+	struct sk_buff_head	out_of_order_queue;
 
 	/* SACKs data, these 2 need to be together (see tcp_options_write) */
 	struct tcp_sack_block duplicate_sack[1]; /* D-SACK block */
@@ -286,6 +282,19 @@ struct tcp_sock {
 	unsigned int		keepalive_intvl;  /* time interval between keep alive probes */
 
 	int			linger2;
+
+/* Network Pacemaker */
+#ifdef CONFIG_NETPM
+	u8 netpm_netif;
+	u8 netpm_rbuf_flag;
+	u32 netpm_rtt_min;
+	u32 netpm_srtt;
+	u32 netpm_rttvar;
+	int netpm_cwnd_est;
+	int netpm_tcp_rmem_max;
+	int netpm_max_tput;
+	int netpm_rmem_max_curbdp;
+#endif
 
 /* Receiver side RTT estimation */
 	struct {
