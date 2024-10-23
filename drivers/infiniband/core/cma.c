@@ -514,7 +514,6 @@ struct rdma_cm_id *rdma_create_id(rdma_cm_event_handler event_handler,
 	INIT_LIST_HEAD(&id_priv->listen_list);
 	INIT_LIST_HEAD(&id_priv->mc_list);
 	get_random_bytes(&id_priv->seq_num, sizeof id_priv->seq_num);
-	id_priv->seq_num &= 0x00ffffff;
 
 	return &id_priv->id;
 }
@@ -756,9 +755,6 @@ int rdma_init_qp_attr(struct rdma_cm_id *id, struct ib_qp_attr *qp_attr,
 		} else
 			ret = iw_cm_init_qp_attr(id_priv->cm_id.iw, qp_attr,
 						 qp_attr_mask);
-		qp_attr->port_num = id_priv->id.port_num;
-		*qp_attr_mask |= IB_QP_PORT;
-
 		break;
 	default:
 		ret = -ENOSYS;
@@ -2192,8 +2188,7 @@ static int cma_bind_addr(struct rdma_cm_id *id, struct sockaddr *src_addr,
 	if (!src_addr || !src_addr->sa_family) {
 		src_addr = (struct sockaddr *) &id->route.addr.src_addr;
 		src_addr->sa_family = dst_addr->sa_family;
-		if (IS_ENABLED(CONFIG_IPV6) &&
-		    dst_addr->sa_family == AF_INET6) {
+		if (dst_addr->sa_family == AF_INET6) {
 			((struct sockaddr_in6 *) src_addr)->sin6_scope_id =
 				((struct sockaddr_in6 *) dst_addr)->sin6_scope_id;
 		} else if (dst_addr->sa_family == AF_IB) {
@@ -2960,9 +2955,6 @@ static int cma_accept_iw(struct rdma_id_private *id_priv,
 {
 	struct iw_cm_conn_param iw_param;
 	int ret;
-
-	if (!conn_param)
-		return -EINVAL;
 
 	ret = cma_modify_qp_rtr(id_priv, conn_param);
 	if (ret)
