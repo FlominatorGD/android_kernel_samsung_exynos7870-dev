@@ -7,6 +7,7 @@
 */
 
 #include "fuse_i.h"
+#include "fuse_shortcircuit.h"
 
 #include <linux/init.h>
 #include <linux/module.h>
@@ -378,19 +379,12 @@ __releases(fc->lock)
 	if (req->background) {
 		req->background = 0;
 
-		if (fc->num_background == fc->max_background) {
+		if (fc->num_background == fc->max_background)
 			fc->blocked = 0;
+
+		/* Wake up next waiter, if any */
+		if (!fc->blocked && waitqueue_active(&fc->blocked_waitq))
 			wake_up(&fc->blocked_waitq);
-		} else if (!fc->blocked) {
-			/*
-			 * Wake up next waiter, if any.  It's okay to use
-			 * waitqueue_active(), as we've already synced up
-			 * fc->blocked with waiters with the wake_up() call
-			 * above.
-			 */
-			if (waitqueue_active(&fc->blocked_waitq))
-				wake_up(&fc->blocked_waitq);
-		}
 
 		if (fc->num_background == fc->congestion_threshold &&
 		    fc->connected && fc->bdi_initialized) {
@@ -783,6 +777,7 @@ static int fuse_check_page(struct page *page)
 {
 	if (page_mapcount(page) ||
 	    page->mapping != NULL ||
+	    page_count(page) != 1 ||
 	    (page->flags & PAGE_FLAGS_CHECK_AT_PREP &
 	     ~(1 << PG_locked |
 	       1 << PG_referenced |
@@ -1853,18 +1848,14 @@ static ssize_t fuse_dev_do_write(struct fuse_conn *fc,
 	}
 	/* Is it an interrupt reply? */
 	if (req->intr_unique == oh.unique) {
-		__fuse_get_request(req);
 		err = -EINVAL;
-		if (nbytes != sizeof(struct fuse_out_header)) {
-			fuse_put_request(fc, req);
+		if (nbytes != sizeof(struct fuse_out_header))
 			goto err_unlock;
-		}
 
 		if (oh.error == -ENOSYS)
 			fc->no_interrupt = 1;
 		else if (oh.error == -EAGAIN)
 			queue_interrupt(fc, req);
-		fuse_put_request(fc, req);
 
 		spin_unlock(&fc->lock);
 		fuse_copy_finish(cs);
@@ -1888,6 +1879,8 @@ static ssize_t fuse_dev_do_write(struct fuse_conn *fc,
 		req->out.h.error = kern_path(path, 0, req->canonical_path);
 	}
 	fuse_copy_finish(cs);
+
+	fuse_setup_shortcircuit(fc, req);
 
 	spin_lock(&fc->lock);
 	req->locked = 0;
