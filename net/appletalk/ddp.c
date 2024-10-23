@@ -1029,11 +1029,6 @@ static int atalk_create(struct net *net, struct socket *sock, int protocol,
 	 */
 	if (sock->type != SOCK_RAW && sock->type != SOCK_DGRAM)
 		goto out;
-
-	rc = -EPERM;
-	if (sock->type == SOCK_RAW && !kern && !capable(CAP_NET_RAW))
-		goto out;
-
 	rc = -ENOMEM;
 	sk = sk_alloc(net, PF_APPLETALK, GFP_KERNEL, &ddp_proto);
 	if (!sk)
@@ -1576,8 +1571,8 @@ static int atalk_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr 
 	struct sk_buff *skb;
 	struct net_device *dev;
 	struct ddpehdr *ddp;
-	int size, hard_header_len;
-	struct atalk_route *rt, *rt_lo = NULL;
+	int size;
+	struct atalk_route *rt;
 	int err;
 
 	if (flags & ~(MSG_DONTWAIT|MSG_CMSG_COMPAT))
@@ -1640,22 +1635,7 @@ static int atalk_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr 
 	SOCK_DEBUG(sk, "SK %p: Size needed %d, device %s\n",
 			sk, size, dev->name);
 
-	hard_header_len = dev->hard_header_len;
-	/* Leave room for loopback hardware header if necessary */
-	if (usat->sat_addr.s_node == ATADDR_BCAST &&
-	    (dev->flags & IFF_LOOPBACK || !(rt->flags & RTF_GATEWAY))) {
-		struct atalk_addr at_lo;
-
-		at_lo.s_node = 0;
-		at_lo.s_net  = 0;
-
-		rt_lo = atrtr_find(&at_lo);
-
-		if (rt_lo && rt_lo->dev->hard_header_len > hard_header_len)
-			hard_header_len = rt_lo->dev->hard_header_len;
-	}
-
-	size += hard_header_len;
+	size += dev->hard_header_len;
 	release_sock(sk);
 	skb = sock_alloc_send_skb(sk, size, (flags & MSG_DONTWAIT), &err);
 	lock_sock(sk);
@@ -1663,7 +1643,7 @@ static int atalk_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr 
 		goto out;
 
 	skb_reserve(skb, ddp_dl->header_length);
-	skb_reserve(skb, hard_header_len);
+	skb_reserve(skb, dev->hard_header_len);
 	skb->dev = dev;
 
 	SOCK_DEBUG(sk, "SK %p: Begin build.\n", sk);
@@ -1714,12 +1694,18 @@ static int atalk_sendmsg(struct kiocb *iocb, struct socket *sock, struct msghdr 
 		/* loop back */
 		skb_orphan(skb);
 		if (ddp->deh_dnode == ATADDR_BCAST) {
-			if (!rt_lo) {
+			struct atalk_addr at_lo;
+
+			at_lo.s_node = 0;
+			at_lo.s_net  = 0;
+
+			rt = atrtr_find(&at_lo);
+			if (!rt) {
 				kfree_skb(skb);
 				err = -ENETUNREACH;
 				goto out;
 			}
-			dev = rt_lo->dev;
+			dev = rt->dev;
 			skb->dev = dev;
 		}
 		ddp_dl->request(ddp_dl, skb, dev->dev_addr);
