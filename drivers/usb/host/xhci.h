@@ -287,8 +287,6 @@ struct xhci_op_regs {
 #define XDEV_U2		(0x2 << 5)
 #define XDEV_U3		(0x3 << 5)
 #define XDEV_RECOVERY	(0x8 << 5)
-#define XDEV_POLLING	(0x7 << 5)
-#define XDEV_COMP_MODE  (0xa << 5)
 #define XDEV_RESUME	(0xf << 5)
 /* true: port has power (see HCC_PPC) */
 #define PORT_POWER	(1 << 9)
@@ -352,10 +350,6 @@ struct xhci_op_regs {
 #define PORT_PLC	(1 << 22)
 /* port configure error change - port failed to configure its link partner */
 #define PORT_CEC	(1 << 23)
-#define PORT_CHANGE_MASK	(PORT_CSC | PORT_PEC | PORT_WRC | PORT_OCC | \
-				 PORT_RC | PORT_PLC | PORT_CEC)
-
-
 /* Cold Attach Status - xHC can set this bit to report device attached during
  * Sx state. Warm port reset should be perfomed to clear this bit and move port
  * to connected state.
@@ -1438,7 +1432,7 @@ struct xhci_bus_state {
  * It can take up to 20 ms to transition from RExit to U0 on the
  * Intel Lynx Point LP xHCI host.
  */
-#define	XHCI_MAX_REXIT_TIMEOUT_MS	20
+#define	XHCI_MAX_REXIT_TIMEOUT	(20 * 1000)
 
 static inline unsigned int hcd_index(struct usb_hcd *hcd)
 {
@@ -1447,6 +1441,13 @@ static inline unsigned int hcd_index(struct usb_hcd *hcd)
 	else
 		return 1;
 }
+
+/*
+ * Sometimes deadlock occurred between hub_event and remove_hcd.
+ * In order to prevent it, waiting for completion of hub_event was added.
+ * This is a timeout (300msec) value for the waiting.
+ */
+#define XHCI_HUB_EVENT_TIMEOUT	(300)
 
 /* There is one xhci_hcd structure per controller */
 struct xhci_hcd {
@@ -1495,8 +1496,12 @@ struct xhci_hcd {
 #define CMD_RING_STATE_STOPPED         (1 << 2)
 	struct list_head        cmd_list;
 	unsigned int		cmd_ring_reserved_trbs;
+#if defined(CONFIG_USB_HOST_SAMSUNG_FEATURE)
 	struct delayed_work	cmd_timer;
 	struct completion	cmd_ring_stop_completion;
+#else
+	struct timer_list	cmd_timer;
+#endif
 	struct xhci_command	*current_cmd;
 	struct xhci_ring	*event_ring;
 	struct xhci_erst	erst;
@@ -1577,7 +1582,8 @@ struct xhci_hcd {
 #define XHCI_PME_STUCK_QUIRK	(1 << 20)
 #define XHCI_SSIC_PORT_UNUSED	(1 << 22)
 #define XHCI_NO_64BIT_SUPPORT	(1 << 23)
-#define XHCI_MISSING_CAS	(1 << 24)
+/* For enabling USB2.0 L1 mode */
+#define XHCI_LPM_L1_SUPPORT	(1 << 25)
 	unsigned int		num_active_eps;
 	unsigned int		limit_active_eps;
 	/* There are two roothubs to keep track of bus suspend info for */
@@ -1586,9 +1592,17 @@ struct xhci_hcd {
 	u8			*port_array;
 	/* Array of pointers to USB 3.0 PORTSC registers */
 	__le32 __iomem		**usb3_ports;
+#ifdef CONFIG_HOST_COMPLIANT_TEST
+	/* Array of pointers to USB 3.0 PORTPMSC registers */
+	__le32 __iomem		**usb3_portpmsc;
+#endif
 	unsigned int		num_usb3_ports;
 	/* Array of pointers to USB 2.0 PORTSC registers */
 	__le32 __iomem		**usb2_ports;
+#ifdef CONFIG_HOST_COMPLIANT_TEST
+	/* Array of pointers to USB 2.0 PORTPMSC registers */
+	__le32 __iomem		**usb2_portpmsc;
+#endif
 	unsigned int		num_usb2_ports;
 	/* support xHCI 0.96 spec USB2 software LPM */
 	unsigned		sw_lpm_support:1;
@@ -1615,14 +1629,35 @@ static inline struct usb_hcd *xhci_to_hcd(struct xhci_hcd *xhci)
 	return xhci->main_hcd;
 }
 
+#ifdef CONFIG_USB_XHCI_HCD_DEBUGGING
+#define XHCI_DEBUG	1
+#else
+#define XHCI_DEBUG	0
+#endif
+
 #define xhci_dbg(xhci, fmt, args...) \
-	dev_dbg(xhci_to_hcd(xhci)->self.controller , fmt , ## args)
+	do { if (XHCI_DEBUG) dev_dbg(xhci_to_hcd(xhci)->self.controller , fmt , ## args); } while (0)
+#define xhci_info(xhci, fmt, args...) \
+	do { if (XHCI_DEBUG) dev_info(xhci_to_hcd(xhci)->self.controller , fmt , ## args); } while (0)
 #define xhci_err(xhci, fmt, args...) \
 	dev_err(xhci_to_hcd(xhci)->self.controller , fmt , ## args)
 #define xhci_warn(xhci, fmt, args...) \
 	dev_warn(xhci_to_hcd(xhci)->self.controller , fmt , ## args)
 #define xhci_warn_ratelimited(xhci, fmt, args...) \
 	dev_warn_ratelimited(xhci_to_hcd(xhci)->self.controller , fmt , ## args)
+
+/* TODO: copied from ehci.h - can be refactored? */
+/* xHCI spec says all registers are little endian */
+static inline unsigned int xhci_readl(const struct xhci_hcd *xhci,
+		__le32 __iomem *regs)
+{
+	return readl(regs);
+}
+static inline void xhci_writel(struct xhci_hcd *xhci,
+		const unsigned int val, __le32 __iomem *regs)
+{
+	writel(val, regs);
+}
 
 /*
  * Registers should always be accessed with double word or quad word accesses.
@@ -1849,8 +1884,11 @@ void xhci_queue_config_ep_quirk(struct xhci_hcd *xhci,
 		unsigned int slot_id, unsigned int ep_index,
 		struct xhci_dequeue_state *deq_state);
 void xhci_stop_endpoint_command_watchdog(unsigned long arg);
+#if defined(CONFIG_USB_HOST_SAMSUNG_FEATURE)
 void xhci_handle_command_timeout(struct work_struct *work);
-
+#else
+void xhci_handle_command_timeout(unsigned long data);
+#endif
 void xhci_ring_ep_doorbell(struct xhci_hcd *xhci, unsigned int slot_id,
 		unsigned int ep_index, unsigned int stream_id);
 void xhci_cleanup_command_queue(struct xhci_hcd *xhci);
@@ -1887,4 +1925,11 @@ struct xhci_input_control_ctx *xhci_get_input_control_ctx(struct xhci_hcd *xhci,
 struct xhci_slot_ctx *xhci_get_slot_ctx(struct xhci_hcd *xhci, struct xhci_container_ctx *ctx);
 struct xhci_ep_ctx *xhci_get_ep_ctx(struct xhci_hcd *xhci, struct xhci_container_ctx *ctx, unsigned int ep_index);
 
+#ifdef CONFIG_HOST_COMPLIANT_TEST
+int xhci_urb_enqueue_single_step(struct usb_hcd *hcd,
+		struct urb *urb, gfp_t mem_flags, int get_dev_desc);
+int xhci_queue_ctrl_tx_single_step(struct xhci_hcd *xhci,
+		gfp_t mem_flags, struct urb *urb, int slot_id,
+		unsigned int ep_index, int get_dev_desc);
+#endif
 #endif /* __LINUX_XHCI_HCD_H */
