@@ -139,6 +139,7 @@ void tcp_time_wait(struct sock *sk, int state, int timeo);
 						 * valid RTT sample has been acquired,
 						 * most likely due to retrans in 3WHS.
 						 */
+#define TCP_DELACK_SEG          1
 
 #define TCP_RESOURCE_PROBE_INTERVAL ((unsigned)(HZ/2U)) /* Maximal interval between probes
 					                 * for local resources.
@@ -279,19 +280,19 @@ extern unsigned int sysctl_tcp_notsent_lowat;
 extern int sysctl_tcp_min_tso_segs;
 extern int sysctl_tcp_autocorking;
 extern int sysctl_tcp_default_init_rwnd;
-
+#ifdef CONFIG_NETPM
+extern int sysctl_tcp_netpm[4];
+extern struct net_device *ip6_dev_find(struct net *net, const struct in6_addr *addr);
+#endif
 extern atomic_long_t tcp_memory_allocated;
+
+/* sysctl variables for controlling various tcp parameters */
+extern int sysctl_tcp_delack_seg;
+extern int sysctl_tcp_use_userconfig;
+
 extern struct percpu_counter tcp_sockets_allocated;
 extern int tcp_memory_pressure;
 
-/* optimized version of sk_under_memory_pressure() for TCP sockets */
-static inline bool tcp_under_memory_pressure(const struct sock *sk)
-{
-	if (mem_cgroup_sockets_enabled && sk->sk_cgrp)
-		return !!sk->sk_cgrp->memory_pressure;
-
-	return tcp_memory_pressure;
-}
 /*
  * The next routines deal with comparing 32 bit unsigned ints
  * and worry about wraparound (automatic with unsigned arithmetic).
@@ -382,6 +383,11 @@ void tcp_twsk_destructor(struct sock *sk);
 ssize_t tcp_splice_read(struct socket *sk, loff_t *ppos,
 			struct pipe_inode_info *pipe, size_t len,
 			unsigned int flags);
+/* sysctl master controller */
+extern int tcp_use_userconfig_sysctl_handler(struct ctl_table *, int,
+				void __user *, size_t *, loff_t *);
+extern int tcp_proc_delayed_ack_control(struct ctl_table *, int,
+				void __user *, size_t *, loff_t *);
 
 void tcp_enter_quickack_mode(struct sock *sk, unsigned int max_quickacks);
 static inline void tcp_dec_quickack_mode(struct sock *sk,
@@ -629,7 +635,7 @@ static inline void tcp_fast_path_check(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 
-	if (RB_EMPTY_ROOT(&tp->out_of_order_queue) &&
+	if (skb_queue_empty(&tp->out_of_order_queue) &&
 	    tp->rcv_wnd &&
 	    atomic_read(&sk->sk_rmem_alloc) < sk->sk_rcvbuf &&
 	    !tp->urg_data)
@@ -785,6 +791,8 @@ enum tcp_ca_event {
 	CA_EVENT_LOSS,		/* loss timeout */
 	CA_EVENT_ECN_NO_CE,	/* ECT set, but not CE marked */
 	CA_EVENT_ECN_IS_CE,	/* received CE marked IP packet */
+	CA_EVENT_DELAYED_ACK,	/* Delayed ack is sent */
+	CA_EVENT_NON_DELAYED_ACK,
 };
 
 /* Information about inbound ACK, passed to cong_ops->in_ack_event() */
@@ -1110,6 +1118,16 @@ u32 tcp_default_init_rwnd(u32 mss);
 void tcp_select_initial_window(int __space, __u32 mss, __u32 *rcv_wnd,
 			       __u32 *window_clamp, int wscale_ok,
 			       __u8 *rcv_wscale, __u32 init_rcv_wnd);
+
+#ifdef CONFIG_NETPM
+static inline int tcp_space_from_win(int win)
+{
+	return sysctl_tcp_adv_win_scale <= 0 ?
+			(win<<(-sysctl_tcp_adv_win_scale)) :
+			(win<<sysctl_tcp_adv_win_scale)/
+				((1<<sysctl_tcp_adv_win_scale)-1);
+}
+#endif
 
 static inline int tcp_win_from_space(int space)
 {
