@@ -302,6 +302,13 @@ EXPORT_SYMBOL(sysctl_tcp_wmem);
 atomic_long_t tcp_memory_allocated;	/* Current allocated memory. */
 EXPORT_SYMBOL(tcp_memory_allocated);
 
+int sysctl_tcp_delack_seg __read_mostly = TCP_DELACK_SEG;
+EXPORT_SYMBOL(sysctl_tcp_delack_seg);
+
+int sysctl_tcp_use_userconfig __read_mostly;
+EXPORT_SYMBOL(sysctl_tcp_use_userconfig);
+
+
 /*
  * Current number of TCP sockets.
  */
@@ -382,7 +389,7 @@ void tcp_init_sock(struct sock *sk)
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
 
-	tp->out_of_order_queue = RB_ROOT;
+	__skb_queue_head_init(&tp->out_of_order_queue);
 	tcp_init_xmit_timers(sk);
 	tcp_prequeue_init(tp);
 	INIT_LIST_HEAD(&tp->tsq_node);
@@ -1424,8 +1431,11 @@ static void tcp_cleanup_rbuf(struct sock *sk, int copied)
 		   /* Delayed ACKs frequently hit locked sockets during bulk
 		    * receive. */
 		if (icsk->icsk_ack.blocked ||
-		    /* Once-per-two-segments ACK was not sent by tcp_input.c */
-		    tp->rcv_nxt - tp->rcv_wup > icsk->icsk_ack.rcv_mss ||
+		    /* Once-per-sysctl_tcp_delack_seg segments
+			  * ACK was not sent by tcp_input.c
+			  */
+		    tp->rcv_nxt - tp->rcv_wup > (icsk->icsk_ack.rcv_mss) *
+						sysctl_tcp_delack_seg ||
 		    /*
 		     * If this read emptied read buffer, we send ACK, if
 		     * connection is not bidirectional, user drained
@@ -2261,7 +2271,7 @@ int tcp_disconnect(struct sock *sk, int flags)
 	tcp_clear_xmit_timers(sk);
 	__skb_queue_purge(&sk->sk_receive_queue);
 	tcp_write_queue_purge(sk);
-	skb_rbtree_purge(&tp->out_of_order_queue);
+	__skb_queue_purge(&tp->out_of_order_queue);
 
 	inet->inet_dport = 0;
 
@@ -2284,8 +2294,8 @@ int tcp_disconnect(struct sock *sk, int flags)
 	tp->total_retrans = 0;
 	inet_csk_delack_init(sk);
 	/* Initialize rcv_mss to TCP_MIN_MSS to avoid division by 0
-	 * issue in __tcp_select_window()
-	 */
+	* issue in __tcp_select_window()
+	*/
 	icsk->icsk_ack.rcv_mss = TCP_MIN_MSS;
 	tcp_init_send_head(sk);
 	memset(&tp->rx_opt, 0, sizeof(tp->rx_opt));
