@@ -260,6 +260,7 @@
 #include <linux/irq.h>
 #include <linux/syscalls.h>
 #include <linux/completion.h>
+#include <linux/freezer.h>
 
 #include <asm/processor.h>
 #include <asm/uaccess.h>
@@ -903,7 +904,6 @@ void add_interrupt_randomness(int irq, int irq_flags)
 
 	fast_mix(fast_pool);
 	add_interrupt_bench(cycles);
-	this_cpu_add(net_rand_state.s1, fast_pool->pool[cycles & 3]);
 
 	if ((fast_pool->count < 64) &&
 	    !time_after(now, fast_pool->last + HZ))
@@ -1805,18 +1805,12 @@ void add_hwgenerator_randomness(const char *buffer, size_t count,
 {
 	struct entropy_store *poolp = &input_pool;
 
-	if (unlikely(nonblocking_pool.initialized == 0))
-		poolp = &nonblocking_pool;
-	else {
-		/* Suspend writing if we're above the trickle
-		 * threshold.  We'll be woken up again once below
-		 * random_write_wakeup_thresh, or when the calling
-		 * thread is about to terminate.
-		 */
-		wait_event_interruptible(random_write_wait,
-					 kthread_should_stop() ||
+	/* Suspend writing if we're above the trickle threshold.
+	 * We'll be woken up again once below random_write_wakeup_thresh,
+	 * or when the calling thread is about to terminate.
+	 */
+	wait_event_freezable(random_write_wait, kthread_should_stop() ||
 			ENTROPY_BITS(&input_pool) <= random_write_wakeup_bits);
-	}
 	mix_pool_bytes(poolp, buffer, count);
 	credit_entropy_bits(poolp, entropy);
 }
