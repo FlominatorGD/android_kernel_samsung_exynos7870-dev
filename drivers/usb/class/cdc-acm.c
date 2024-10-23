@@ -338,10 +338,8 @@ static void acm_ctrl_irq(struct urb *urb)
 			acm->iocount.dsr++;
 		if (difference & ACM_CTRL_DCD)
 			acm->iocount.dcd++;
-		if (newctrl & ACM_CTRL_BRK) {
+		if (newctrl & ACM_CTRL_BRK)
 			acm->iocount.brk++;
-			tty_insert_flip_char(&acm->port, 0, TTY_BREAK);
-		}
 		if (newctrl & ACM_CTRL_RI)
 			acm->iocount.rng++;
 		if (newctrl & ACM_CTRL_FRAMING)
@@ -545,8 +543,7 @@ static void acm_port_dtr_rts(struct tty_port *port, int raise)
 
 	res = acm_set_control(acm, val);
 	if (res && (acm->ctrl_caps & USB_CDC_CAP_LINE))
-		/* This is broken in too many devices to spam the logs */
-		dev_dbg(&acm->control->dev, "failed to set dtr/rts\n");
+		dev_err(&acm->control->dev, "failed to set dtr/rts\n");
 }
 
 static int acm_port_activate(struct tty_port *port, struct tty_struct *tty)
@@ -878,6 +875,8 @@ static int set_serial_info(struct acm *acm,
 		if ((new_serial.close_delay != old_close_delay) ||
 	            (new_serial.closing_wait != old_closing_wait))
 			retval = -EPERM;
+		else
+			retval = -EOPNOTSUPP;
 	} else {
 		acm->port.close_delay  = close_delay;
 		acm->port.closing_wait = closing_wait;
@@ -1087,6 +1086,21 @@ static int acm_write_buffers_alloc(struct acm *acm)
 	return 0;
 }
 
+static int check_samsung_feature_ums_acm_device(struct usb_device *dev)
+{
+	int ret = 0;
+
+ 	pr_info("%s : product=%s\n", __func__, dev->product);
+
+	if (!dev->product)
+		return ret;
+
+	if (!strnicmp(dev->product , "SM-B360E", 8))
+		ret = 1;
+
+	return ret;
+}
+
 static int acm_probe(struct usb_interface *intf,
 		     const struct usb_device_id *id)
 {
@@ -1234,6 +1248,11 @@ next_desc:
 				goto look_for_collapsed_interface;
 			}
 		}
+	} else if (check_samsung_feature_ums_acm_device(usb_dev)) {
+		data_interface = usb_ifnum_to_if(usb_dev, 2);
+		control_interface = usb_ifnum_to_if(usb_dev, 1);
+		pr_info("%s : manual set data_interface = 2, control_interface = 1\n", __func__);
+		goto skip_normal_probe;
 	} else {
 		control_interface = usb_ifnum_to_if(usb_dev, union_header->bMasterInterface0);
 		data_interface = usb_ifnum_to_if(usb_dev, (data_interface_num = union_header->bSlaveInterface0));
@@ -1334,16 +1353,6 @@ made_compressed_probe:
 		goto alloc_fail;
 	}
 
-	ctrlsize = usb_endpoint_maxp(epctrl);
-	readsize = usb_endpoint_maxp(epread) *
-				(quirks == SINGLE_RX_URB ? 1 : 2);
-	acm->combined_interfaces = combined_interfaces;
-	acm->writesize = usb_endpoint_maxp(epwrite) * 20;
-	acm->control = control_interface;
-	acm->data = data_interface;
-
-	usb_get_intf(acm->control); /* undone in destruct() */
-
 	minor = acm_alloc_minor(acm);
 	if (minor == ACM_TTY_MINORS) {
 		dev_err(&intf->dev, "no more free acm devices\n");
@@ -1351,6 +1360,13 @@ made_compressed_probe:
 		return -ENODEV;
 	}
 
+	ctrlsize = usb_endpoint_maxp(epctrl);
+	readsize = usb_endpoint_maxp(epread) *
+				(quirks == SINGLE_RX_URB ? 1 : 2);
+	acm->combined_interfaces = combined_interfaces;
+	acm->writesize = usb_endpoint_maxp(epwrite) * 20;
+	acm->control = control_interface;
+	acm->data = data_interface;
 	acm->minor = minor;
 	acm->dev = usb_dev;
 	acm->ctrl_caps = ac_management_function;
@@ -1505,6 +1521,7 @@ skip_countries:
 	usb_driver_claim_interface(&acm_driver, data_interface, acm);
 	usb_set_intfdata(data_interface, acm);
 
+	usb_get_intf(control_interface);
 	tty_dev = tty_port_register_device(&acm->port, acm_tty_driver, minor,
 			&control_interface->dev);
 	if (IS_ERR(tty_dev)) {
@@ -1519,11 +1536,6 @@ skip_countries:
 
 	return 0;
 alloc_fail8:
-	if (!acm->combined_interfaces) {
-		/* Clear driver data so that disconnect() returns early. */
-		usb_set_intfdata(data_interface, NULL);
-		usb_driver_release_interface(&acm_driver, data_interface);
-	}
 	if (acm->country_codes) {
 		device_remove_file(&acm->control->dev,
 				&dev_attr_wCountryCodes);
@@ -1716,15 +1728,6 @@ static const struct usb_device_id acm_ids[] = {
 	{ USB_DEVICE(0x0870, 0x0001), /* Metricom GS Modem */
 	.driver_info = NO_UNION_NORMAL, /* has no union descriptor */
 	},
-	{ USB_DEVICE(0x045b, 0x023c),	/* Renesas USB Download mode */
-	.driver_info = DISABLE_ECHO,	/* Don't echo banner */
-	},
-	{ USB_DEVICE(0x045b, 0x0248),	/* Renesas USB Download mode */
-	.driver_info = DISABLE_ECHO,	/* Don't echo banner */
-	},
-	{ USB_DEVICE(0x045b, 0x024D),	/* Renesas USB Download mode */
-	.driver_info = DISABLE_ECHO,	/* Don't echo banner */
-	},
 	{ USB_DEVICE(0x0e8d, 0x0003), /* FIREFLY, MediaTek Inc; andrey.arapov@gmail.com */
 	.driver_info = NO_UNION_NORMAL, /* has no union descriptor */
 	},
@@ -1751,9 +1754,6 @@ static const struct usb_device_id acm_ids[] = {
 	},
 	{ USB_DEVICE(0x11ca, 0x0201), /* VeriFone Mx870 Gadget Serial */
 	.driver_info = SINGLE_RX_URB,
-	},
-	{ USB_DEVICE(0x1965, 0x0018), /* Uniden UBC125XLT */
-	.driver_info = NO_UNION_NORMAL, /* has no union descriptor */
 	},
 	{ USB_DEVICE(0x22b8, 0x7000), /* Motorola Q Phone */
 	.driver_info = NO_UNION_NORMAL, /* has no union descriptor */
@@ -1922,10 +1922,6 @@ static const struct usb_device_id acm_ids[] = {
 	{ USB_DEVICE(0x04d8, 0x0083),	/* Bootloader mode */
 	.driver_info = IGNORE_DEVICE,
 	},
-
-	{ USB_DEVICE(0x04d8, 0xf58b),
-	.driver_info = IGNORE_DEVICE,
-	},
 #endif
 
 	/*Samsung phone in firmware update mode */
@@ -1938,32 +1934,11 @@ static const struct usb_device_id acm_ids[] = {
 	.driver_info = IGNORE_DEVICE,
 	},
 
-	/* Exclude ETAS ES58x */
-	{ USB_DEVICE(0x108c, 0x0159), /* ES581.4 */
-	.driver_info = IGNORE_DEVICE,
-	},
-	{ USB_DEVICE(0x108c, 0x0168), /* ES582.1 */
-	.driver_info = IGNORE_DEVICE,
-	},
-	{ USB_DEVICE(0x108c, 0x0169), /* ES584.1 */
-	.driver_info = IGNORE_DEVICE,
-	},
-
 	{ USB_DEVICE(0x1bc7, 0x0021), /* Telit 3G ACM only composition */
 	.driver_info = SEND_ZERO_PACKET,
 	},
 	{ USB_DEVICE(0x1bc7, 0x0023), /* Telit 3G ACM + ECM composition */
 	.driver_info = SEND_ZERO_PACKET,
-	},
-
-	/* Exclude Goodix Fingerprint Reader */
-	{ USB_DEVICE(0x27c6, 0x5395),
-	.driver_info = IGNORE_DEVICE,
-	},
-
-	/* Exclude Heimann Sensor GmbH USB appset demo */
-	{ USB_DEVICE(0x32a7, 0x0000),
-	.driver_info = IGNORE_DEVICE,
 	},
 
 	/* control interfaces without any protocol set */
