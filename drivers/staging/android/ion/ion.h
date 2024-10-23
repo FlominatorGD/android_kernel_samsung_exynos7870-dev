@@ -1,277 +1,226 @@
-#undef TRACE_SYSTEM
-#define TRACE_SYSTEM ion
+/*
+ * drivers/staging/android/ion/ion.h
+ *
+ * Copyright (C) 2011 Google, Inc.
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ */
 
-#if !defined(_TRACE_ION_H) || defined(TRACE_HEADER_MULTI_READ)
-#define _TRACE_ION_H
+#ifndef _LINUX_ION_H
+#define _LINUX_ION_H
 
 #include <linux/types.h>
-#include <linux/tracepoint.h>
 
-#define show_buffer_flags(flags)			\
-	(flags) ? __print_flags(flags, "|",		\
-	{(unsigned long) (1 << 0), "cached"},		\
-	{(unsigned long) (1 << 1), "needsync"},		\
-	{(unsigned long) (1 << 2), "kmap"},		\
-	{(unsigned long) (1 << 3), "nozeroed"},		\
-	{(unsigned long) (1 << 11), "shrink"},		\
-	{(unsigned long) (1 << 12), "migrated"},	\
-	{(unsigned long) (1 << 13), "ready"}		\
-	) : "noncached"
+#include <uapi/linux/ion.h>
 
-#define dir_string(dir)					\
-	dir == DMA_BIDIRECTIONAL ? "bidirectional" :	\
-	dir == DMA_TO_DEVICE ? "to_device" : 		\
-	dir == DMA_FROM_DEVICE ? "from_device" :	\
-	dir == DMA_NONE ? "none" : "invalid"
+struct ion_handle;
+struct ion_device;
+struct ion_heap;
+struct ion_mapper;
+struct ion_client;
+struct ion_buffer;
 
-DECLARE_EVENT_CLASS(ion_alloc,
+/* This should be removed some day when phys_addr_t's are fully
+   plumbed in the kernel, and all instances of ion_phys_addr_t should
+   be converted to phys_addr_t.  For the time being many kernel interfaces
+   do not accept phys_addr_t's that would have to */
+#define ion_phys_addr_t unsigned long
 
-	TP_PROTO(const char *client_name,
-			unsigned long buffer_id,
-			size_t len,
-			size_t align,
-			unsigned int heap_id_mask,
-			unsigned int flags),
+/**
+ * struct ion_platform_heap - defines a heap in the given platform
+ * @type:	type of the heap from ion_heap_type enum
+ * @id:		unique identifier for heap.  When allocating higher numbers
+ *		will be allocated from first.  At allocation these are passed
+ *		as a bit mask and therefore can not exceed ION_NUM_HEAP_IDS.
+ * @name:	used for debug purposes
+ * @base:	base address of heap in physical memory if applicable
+ * @size:	size of the heap in bytes if applicable
+ * @align:	required alignment in physical memory if applicable
+ * @priv:	private info passed from the board file
+ *
+ * Provided by the board file.
+ */
+struct ion_platform_heap {
+	enum ion_heap_type type;
+	unsigned int id;
+	const char *name;
+	ion_phys_addr_t base;
+	size_t size;
+	ion_phys_addr_t align;
+	void *priv;
+};
 
-	TP_ARGS(client_name, buffer_id, len, align, heap_id_mask, flags),
+/**
+ * struct ion_platform_data - array of platform heaps passed from board file
+ * @nr:		number of structures in the array
+ * @heaps:	array of platform_heap structions
+ *
+ * Provided by the board file in the form of platform data to a platform device.
+ */
+struct ion_platform_data {
+	int nr;
+	struct ion_platform_heap *heaps;
+};
 
-	TP_STRUCT__entry(
-		__field(	const char *,		client_name	)
-		__field(	unsigned long,		buffer_id	)
-		__field(	size_t,			len		)
-		__field(	size_t,			align		)
-		__field(	unsigned int,		heap_id_mask	)
-		__field(	unsigned int,		flags		)
-	),
+/**
+ * ion_reserve() - reserve memory for ion heaps if applicable
+ * @data:	platform data specifying starting physical address and
+ *		size
+ *
+ * Calls memblock reserve to set aside memory for heaps that are
+ * located at specific memory addresses or of specific sizes not
+ * managed by the kernel
+ */
+void ion_reserve(struct ion_platform_data *data);
 
-	TP_fast_assign(
-		__entry->client_name	= client_name;
-		__entry->buffer_id	= buffer_id;
-		__entry->len		= len;
-		__entry->align		= align;
-		__entry->heap_id_mask	= heap_id_mask;
-		__entry->flags		= flags;
-	),
+/**
+ * ion_client_create() -  allocate a client and returns it
+ * @dev:		the global ion device
+ * @name:		used for debugging
+ */
+struct ion_client *ion_client_create(struct ion_device *dev,
+				     const char *name);
 
-	TP_printk("client=%s, buffer=%08lx, len=%zd, "
-			"align=%zd, heap_id_mask=%d, flags=%#x(%s)",
-			__entry->client_name,
-			__entry->buffer_id,
-			__entry->len,
-			__entry->align,
-			__entry->heap_id_mask,
-			__entry->flags,
-			show_buffer_flags(__entry->flags)
-	)
-);
+/**
+ * ion_client_destroy() -  free's a client and all it's handles
+ * @client:	the client
+ *
+ * Free the provided client and all it's resources including
+ * any handles it is holding.
+ */
+void ion_client_destroy(struct ion_client *client);
 
-DEFINE_EVENT(ion_alloc, ion_alloc_start,
+/**
+ * ion_alloc - allocate ion memory
+ * @client:		the client
+ * @len:		size of the allocation
+ * @align:		requested allocation alignment, lots of hardware blocks
+ *			have alignment requirements of some kind
+ * @heap_id_mask:	mask of heaps to allocate from, if multiple bits are set
+ *			heaps will be tried in order from highest to lowest
+ *			id
+ * @flags:		heap flags, the low 16 bits are consumed by ion, the
+ *			high 16 bits are passed on to the respective heap and
+ *			can be heap custom
+ *
+ * Allocate memory in one of the heaps provided in heap mask and return
+ * an opaque handle to it.
+ */
+struct ion_handle *ion_alloc(struct ion_client *client, size_t len,
+			     size_t align, unsigned int heap_id_mask,
+			     unsigned int flags);
 
-	TP_PROTO(const char *client_name,
-			unsigned long buffer_id,
-			size_t len,
-			size_t align,
-			unsigned int heap_id_mask,
-			unsigned int flags),
+/**
+ * ion_free - free a handle
+ * @client:	the client
+ * @handle:	the handle to free
+ *
+ * Free the provided handle.
+ */
+void ion_free(struct ion_client *client, struct ion_handle *handle);
 
-	TP_ARGS(client_name, buffer_id, len, align, heap_id_mask, flags)
-);
+/**
+ * ion_phys - returns the physical address and len of a handle
+ * @client:	the client
+ * @handle:	the handle
+ * @addr:	a pointer to put the address in
+ * @len:	a pointer to put the length in
+ *
+ * This function queries the heap for a particular handle to get the
+ * handle's physical address.  It't output is only correct if
+ * a heap returns physically contiguous memory -- in other cases
+ * this api should not be implemented -- ion_sg_table should be used
+ * instead.  Returns -EINVAL if the handle is invalid.  This has
+ * no implications on the reference counting of the handle --
+ * the returned value may not be valid if the caller is not
+ * holding a reference.
+ */
+int ion_phys(struct ion_client *client, struct ion_handle *handle,
+	     ion_phys_addr_t *addr, size_t *len);
 
-DEFINE_EVENT(ion_alloc, ion_alloc_end,
+/**
+ * ion_map_dma - return an sg_table describing a handle
+ * @client:	the client
+ * @handle:	the handle
+ *
+ * This function returns the sg_table describing
+ * a particular ion handle.
+ */
+struct sg_table *ion_sg_table(struct ion_client *client,
+			      struct ion_handle *handle);
 
-	TP_PROTO(const char *client_name,
-			unsigned long buffer_id,
-			size_t len,
-			size_t align,
-			unsigned int heap_id_mask,
-			unsigned int flags),
+/**
+ * ion_map_kernel - create mapping for the given handle
+ * @client:	the client
+ * @handle:	handle to map
+ *
+ * Map the given handle into the kernel and return a kernel address that
+ * can be used to access this address.
+ */
+void *ion_map_kernel(struct ion_client *client, struct ion_handle *handle);
 
-	TP_ARGS(client_name, buffer_id, len, align, heap_id_mask, flags)
-);
+/**
+ * ion_unmap_kernel() - destroy a kernel mapping for a handle
+ * @client:	the client
+ * @handle:	handle to unmap
+ */
+void ion_unmap_kernel(struct ion_client *client, struct ion_handle *handle);
 
-DEFINE_EVENT(ion_alloc, ion_alloc_fail,
+/**
+ * ion_share_dma_buf() - share buffer as dma-buf
+ * @client:	the client
+ * @handle:	the handle
+ */
+struct dma_buf *ion_share_dma_buf(struct ion_client *client,
+						struct ion_handle *handle);
 
-	TP_PROTO(const char *client_name,
-			unsigned long buffer_id,
-			size_t len,
-			size_t align,
-			unsigned int heap_id_mask,
-			unsigned int flags),
+/**
+ * ion_share_dma_buf_fd() - given an ion client, create a dma-buf fd
+ * @client:	the client
+ * @handle:	the handle
+ */
+int ion_share_dma_buf_fd(struct ion_client *client, struct ion_handle *handle);
 
-	TP_ARGS(client_name, buffer_id, len, align, heap_id_mask, flags)
-);
+/**
+ * ion_import_dma_buf() - given an dma-buf fd from the ion exporter get handle
+ * @client:	the client
+ * @fd:		the dma-buf fd
+ *
+ * Given an dma-buf fd that was allocated through ion via ion_share_dma_buf,
+ * import that fd and return a handle representing it.  If a dma-buf from
+ * another exporter is passed in this function will return ERR_PTR(-EINVAL)
+ */
+struct ion_handle *ion_import_dma_buf(struct ion_client *client, int fd);
 
-DECLARE_EVENT_CLASS(ion_free,
+/**
+ * ion_cached_needsync_dmabuf() - check if a dmabuf is cacheable
+ * @dmabuf: a pointer to dma_buf
+ *
+ * Given a dma-buf that is exported by ION, check if the buffer is allocated
+ * with ION_FLAG_CACHED and ION_FLAG_CACHED_NEED_SYNC. If the flags are set
+ * the function returns 1. If it is unset, 0. If the given dmabuf is not
+ * exported by ION, -error is returned.
+ */
+int ion_cached_needsync_dmabuf(struct dma_buf *dmabuf);
 
-	TP_PROTO(unsigned long buffer_id, size_t len, bool shrinker),
+#include <linux/dma-direction.h>
+#include <linux/dma-buf.h>
 
-	TP_ARGS(buffer_id, len, shrinker),
+dma_addr_t ion_iovmm_map(struct dma_buf_attachment *attachment,
+			 off_t offset, size_t size,
+			 enum dma_data_direction direction,
+			 int iommu_prot);
+void ion_iovmm_unmap(struct dma_buf_attachment *attachment, dma_addr_t iova);
+int ion_secure_protect(struct ion_buffer *buffer);
+int ion_secure_unprotect(struct ion_buffer *buffer);
+bool ion_is_heap_available(struct ion_heap *heap, unsigned long flags, void *data);
 
-	TP_STRUCT__entry(
-		__field(	unsigned long,		buffer_id	)
-		__field(	size_t,			len		)
-		__field(	bool,			shrinker	)
-	),
-
-	TP_fast_assign(
-		__entry->buffer_id	= buffer_id;
-		__entry->len		= len;
-		__entry->shrinker	= shrinker;
-	),
-
-	TP_printk("buffer=%08lx, len=%zd, shrinker=%s",
-			__entry->buffer_id,
-			__entry->len,
-			__entry->shrinker ? "yes" : "no"
-	)
-);
-
-DEFINE_EVENT(ion_free, ion_free_start,
-
-	TP_PROTO(unsigned long buffer_id, size_t len, bool shrinker),
-
-	TP_ARGS(buffer_id, len, shrinker)
-);
-
-DEFINE_EVENT(ion_free, ion_free_end,
-
-	TP_PROTO(unsigned long buffer_id, size_t len, bool shrinker),
-
-	TP_ARGS(buffer_id, len, shrinker)
-);
-
-DECLARE_EVENT_CLASS(ion_mmap,
-
-	TP_PROTO(unsigned long buffer_id, size_t len, bool faultmap),
-
-	TP_ARGS(buffer_id, len, faultmap),
-
-	TP_STRUCT__entry(
-		__field(	unsigned long,		buffer_id	)
-		__field(	size_t,			len		)
-		__field(	bool,			faultmap	)
-	),
-
-	TP_fast_assign(
-		__entry->buffer_id	= buffer_id;
-		__entry->len		= len;
-		__entry->faultmap	= faultmap;
-	),
-
-	TP_printk("buffer=%08lx, len=%zd, faultmap=%s",
-			__entry->buffer_id,
-			__entry->len,
-			__entry->faultmap ? "yes" : "no"
-	)
-);
-
-DEFINE_EVENT(ion_mmap, ion_mmap_start,
-
-	TP_PROTO(unsigned long buffer_id, size_t len, bool faultmap),
-
-	TP_ARGS(buffer_id, len, faultmap)
-);
-
-DEFINE_EVENT(ion_mmap, ion_mmap_end,
-
-	TP_PROTO(unsigned long buffer_id, size_t len, bool faultmap),
-
-	TP_ARGS(buffer_id, len, faultmap)
-);
-
-TRACE_EVENT(ion_shrink,
-
-	TP_PROTO(unsigned long nr_to_scan, unsigned long freed),
-
-	TP_ARGS(nr_to_scan, freed),
-
-	TP_STRUCT__entry(
-		__field(	unsigned long,		nr_to_scan	)
-		__field(	unsigned long,		freed		)
-	),
-
-	TP_fast_assign(
-		__entry->nr_to_scan	= nr_to_scan;
-		__entry->freed		= freed;
-	),
-
-	TP_printk("nr_to_scan=%lu, freed=%lu",
-			__entry->nr_to_scan,
-			__entry->freed
-	)
-);
-
-DECLARE_EVENT_CLASS(ion_sync,
-
-	TP_PROTO(unsigned long caller,
-			struct device *dev,
-			enum dma_data_direction dir,
-			size_t size,
-			void *vaddr,
-			off_t offset,
-			bool flush_all),
-
-	TP_ARGS(caller, dev, dir, size, vaddr, offset, flush_all),
-
-	TP_STRUCT__entry(
-		__field(	unsigned long,		 caller		)
-		__field(	struct device *,	 dev		)
-		__field(	enum dma_data_direction, dir		)
-		__field(	size_t,			 size		)
-		__field(	void *,			 vaddr		)
-		__field(	off_t,			 offset		)
-		__field(	bool,			 flush_all	)
-	),
-
-	TP_fast_assign(
-		__entry->caller		= caller;
-		__entry->dev		= dev;
-		__entry->dir		= dir;
-		__entry->size		= size;
-		__entry->vaddr		= vaddr;
-		__entry->offset		= offset;
-		__entry->flush_all	= flush_all;
-	),
-
-	TP_printk("caller=%ps, dev=%s, dir=%s, size=%zd, "
-			"va=%p, offs=%ld, all=%s",
-			&__entry->caller,
-			dev_name(__entry->dev),
-			dir_string(__entry->dir),
-			__entry->size,
-			__entry->vaddr,
-			__entry->offset,
-			__entry->flush_all ? "yes" : "no"
-	)
-);
-
-DEFINE_EVENT(ion_sync, ion_sync_start,
-
-	TP_PROTO(unsigned long caller,
-			struct device *dev,
-			enum dma_data_direction dir,
-			size_t size,
-			void *vaddr,
-			off_t offset,
-			bool flush_all),
-
-	TP_ARGS(caller, dev, dir, size, vaddr, offset, flush_all)
-);
-
-DEFINE_EVENT(ion_sync, ion_sync_end,
-
-	TP_PROTO(unsigned long caller,
-			struct device *dev,
-			enum dma_data_direction dir,
-			size_t size,
-			void *vaddr,
-			off_t offset,
-			bool flush_all),
-
-	TP_ARGS(caller, dev, dir, size, vaddr, offset, flush_all)
-);
-
-#endif /* _TRACE_ION_H */
-
-/* This part must be outside protection */
-#include <trace/define_trace.h>
+#endif /* _LINUX_ION_H */
