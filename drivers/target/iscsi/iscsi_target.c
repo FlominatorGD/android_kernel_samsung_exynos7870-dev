@@ -503,7 +503,8 @@ static void iscsit_aborted_task(struct iscsi_conn *conn, struct iscsi_cmd *cmd)
 	bool scsi_cmd = (cmd->iscsi_opcode == ISCSI_OP_SCSI_CMD);
 
 	spin_lock_bh(&conn->cmd_lock);
-	if (!list_empty(&cmd->i_conn_node))
+	if (!list_empty(&cmd->i_conn_node) &&
+	    !(cmd->se_cmd.transport_state & CMD_T_FABRIC_STOP))
 		list_del_init(&cmd->i_conn_node);
 	spin_unlock_bh(&conn->cmd_lock);
 
@@ -1117,18 +1118,6 @@ iscsit_get_immediate_data(struct iscsi_cmd *cmd, struct iscsi_scsi_req *hdr,
 	 */
 	if (dump_payload)
 		goto after_immediate_data;
-	/*
-	 * Check for underflow case where both EDTL and immediate data payload
-	 * exceeds what is presented by CDB's TRANSFER LENGTH, and what has
-	 * already been set in target_cmd_size_check() as se_cmd->data_length.
-	 *
-	 * For this special case, fail the command and dump the immediate data
-	 * payload.
-	 */
-	if (cmd->first_burst_len > cmd->se_cmd.data_length) {
-		cmd->sense_reason = TCM_INVALID_CDB_FIELD;
-		goto after_immediate_data;
-	}
 
 	immed_ret = iscsit_handle_immediate_data(cmd, hdr,
 					cmd->first_burst_len);
@@ -1995,7 +1984,6 @@ iscsit_setup_text_cmd(struct iscsi_conn *conn, struct iscsi_cmd *cmd,
 	cmd->cmd_sn		= be32_to_cpu(hdr->cmdsn);
 	cmd->exp_stat_sn	= be32_to_cpu(hdr->exp_statsn);
 	cmd->data_direction	= DMA_NONE;
-	kfree(cmd->text_in_ptr);
 
 	return 0;
 }
@@ -4210,22 +4198,12 @@ static void iscsit_release_commands_from_conn(struct iscsi_conn *conn)
 	spin_lock_bh(&conn->cmd_lock);
 	list_splice_init(&conn->conn_cmd_list, &tmp_list);
 
-	list_for_each_entry_safe(cmd, cmd_tmp, &tmp_list, i_conn_node) {
+	list_for_each_entry(cmd, &tmp_list, i_conn_node) {
 		struct se_cmd *se_cmd = &cmd->se_cmd;
 
 		if (se_cmd->se_tfo != NULL) {
 			spin_lock_irq(&se_cmd->t_state_lock);
-			if (se_cmd->transport_state & CMD_T_ABORTED) {
-				/*
-				 * LIO's abort path owns the cleanup for this,
-				 * so put it back on the list and let
-				 * aborted_task handle it.
-				 */
-				list_move_tail(&cmd->i_conn_node,
-					       &conn->conn_cmd_list);
-			} else {
-				se_cmd->transport_state |= CMD_T_FABRIC_STOP;
-			}
+			se_cmd->transport_state |= CMD_T_FABRIC_STOP;
 			spin_unlock_irq(&se_cmd->t_state_lock);
 		}
 	}
@@ -4845,7 +4823,6 @@ int iscsit_release_sessions_for_tpg(struct iscsi_portal_group *tpg, int force)
 			continue;
 		}
 		atomic_set(&sess->session_reinstatement, 1);
-		atomic_set(&sess->session_fall_back_to_erl0, 1);
 		spin_unlock(&sess->conn_lock);
 
 		list_move_tail(&se_sess->sess_list, &free_list);
