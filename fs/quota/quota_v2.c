@@ -264,7 +264,6 @@ static void v2r1_mem2diskdqb(void *dp, struct dquot *dquot)
 	d->dqb_curspace = cpu_to_le64(m->dqb_curspace);
 	d->dqb_btime = cpu_to_le64(m->dqb_btime);
 	d->dqb_id = cpu_to_le32(from_kqid(&init_user_ns, dquot->dq_id));
-	d->dqb_pad = 0;
 	if (qtree_entry_unused(info, dp))
 		d->dqb_itime = cpu_to_le64(1);
 }
@@ -303,6 +302,11 @@ static int v2_free_file_info(struct super_block *sb, int type)
 	return 0;
 }
 
+static int v2_get_next_id(struct super_block *sb, struct kqid *qid)
+{
+	return qtree_get_next_id(sb_dqinfo(sb, qid->type)->dqi_priv, qid);
+}
+
 static const struct quota_format_ops v2_format_ops = {
 	.check_quota_file	= v2_check_quota_file,
 	.read_file_info		= v2_read_file_info,
@@ -311,6 +315,7 @@ static const struct quota_format_ops v2_format_ops = {
 	.read_dqblk		= v2_read_dquot,
 	.commit_dqblk		= v2_write_dquot,
 	.release_dqblk		= v2_release_dquot,
+	.get_next_id		= v2_get_next_id,
 };
 
 static struct quota_format_type v2r0_quota_format = {
