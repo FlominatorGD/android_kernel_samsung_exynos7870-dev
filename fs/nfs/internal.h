@@ -242,6 +242,7 @@ int nfs_iocounter_wait(struct nfs_io_counter *c);
 extern const struct nfs_pageio_ops nfs_pgio_rw_ops;
 struct nfs_pgio_header *nfs_pgio_header_alloc(const struct nfs_rw_ops *);
 void nfs_pgio_header_free(struct nfs_pgio_header *);
+void nfs_pgio_data_destroy(struct nfs_pgio_header *);
 int nfs_generic_pgio(struct nfs_pageio_descriptor *, struct nfs_pgio_header *);
 int nfs_initiate_pgio(struct rpc_clnt *, struct nfs_pgio_header *,
 		      const struct rpc_call_ops *, int, int);
@@ -348,7 +349,7 @@ extern int nfs_drop_inode(struct inode *);
 extern void nfs_clear_inode(struct inode *);
 extern void nfs_evict_inode(struct inode *);
 void nfs_zap_acl_cache(struct inode *inode);
-extern int nfs_wait_bit_killable(struct wait_bit_key *key);
+extern int nfs_wait_bit_killable(struct wait_bit_key *key, int mode);
 
 /* super.c */
 extern const struct super_operations nfs_sops;
@@ -496,14 +497,12 @@ extern int nfs41_walk_client_list(struct nfs_client *clp,
 
 static inline struct inode *nfs_igrab_and_active(struct inode *inode)
 {
-	struct super_block *sb = inode->i_sb;
-
-	if (sb && nfs_sb_active(sb)) {
-		if (igrab(inode))
-			return inode;
-		nfs_sb_deactive(sb);
+	inode = igrab(inode);
+	if (inode != NULL && !nfs_sb_active(inode->i_sb)) {
+		iput(inode);
+		inode = NULL;
 	}
-	return NULL;
+	return inode;
 }
 
 static inline void nfs_iput_and_deactive(struct inode *inode)
