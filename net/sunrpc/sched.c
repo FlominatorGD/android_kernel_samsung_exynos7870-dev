@@ -259,11 +259,11 @@ void rpc_destroy_wait_queue(struct rpc_wait_queue *queue)
 }
 EXPORT_SYMBOL_GPL(rpc_destroy_wait_queue);
 
-static int rpc_wait_bit_killable(struct wait_bit_key *key)
+static int rpc_wait_bit_killable(struct wait_bit_key *key, int mode)
 {
-	if (fatal_signal_pending(current))
-		return -ERESTARTSYS;
 	freezable_schedule_unsafe();
+	if (signal_pending_state(mode, current))
+		return -ERESTARTSYS;
 	return 0;
 }
 
@@ -473,20 +473,10 @@ static struct rpc_task *__rpc_find_next_queued_priority(struct rpc_wait_queue *q
 	struct rpc_task *task;
 
 	/*
-	 * Service the privileged queue.
-	 */
-	q = &queue->tasks[RPC_NR_PRIORITY - 1];
-	if (queue->maxpriority > RPC_PRIORITY_PRIVILEGED && !list_empty(q)) {
-		task = list_first_entry(q, struct rpc_task, u.tk_wait.list);
-		goto out;
-	}
-
-	/*
 	 * Service a batch of tasks from a single owner.
 	 */
 	q = &queue->tasks[queue->priority];
-	if (!list_empty(q) && queue->nr) {
-		queue->nr--;
+	if (!list_empty(q) && --queue->nr) {
 		task = list_first_entry(q, struct rpc_task, u.tk_wait.list);
 		goto out;
 	}
