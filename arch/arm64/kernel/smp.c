@@ -36,6 +36,7 @@
 #include <linux/completion.h>
 #include <linux/of.h>
 #include <linux/irq_work.h>
+#include <linux/exynos-ss.h>
 
 #include <asm/alternative.h>
 #include <asm/atomic.h>
@@ -51,6 +52,8 @@
 #include <asm/sections.h>
 #include <asm/tlbflush.h>
 #include <asm/ptrace.h>
+#include <asm/cputype.h>
+#include <asm/topology.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ipi.h>
@@ -69,6 +72,7 @@ enum ipi_msg_type {
 	IPI_CPU_STOP,
 	IPI_TIMER,
 	IPI_IRQ_WORK,
+	IPI_WAKEUP,
 };
 
 /*
@@ -491,6 +495,7 @@ static const char *ipi_types[NR_IPI] __tracepoint_string = {
 	S(IPI_CPU_STOP, "CPU stop interrupts"),
 	S(IPI_TIMER, "Timer broadcast interrupts"),
 	S(IPI_IRQ_WORK, "IRQ work interrupts"),
+	S(IPI_WAKEUP, "CPU Wakeup by interrupts"),
 };
 
 static void smp_cross_call(const struct cpumask *target, unsigned int ipinr)
@@ -547,7 +552,7 @@ static DEFINE_RAW_SPINLOCK(stop_lock);
 /*
  * ipi_cpu_stop - handle IPI from smp_send_stop()
  */
-static void ipi_cpu_stop(unsigned int cpu)
+static void ipi_cpu_stop(unsigned int cpu, struct pt_regs *regs)
 {
 	if (system_state == SYSTEM_BOOTING ||
 	    system_state == SYSTEM_RUNNING) {
@@ -561,8 +566,10 @@ static void ipi_cpu_stop(unsigned int cpu)
 
 	local_irq_disable();
 
+	exynos_ss_save_context(regs);
+
 	while (1)
-		cpu_relax();
+		wfi();
 }
 
 /*
@@ -577,6 +584,8 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 		trace_ipi_entry(ipi_types[ipinr]);
 		__inc_irq_stat(cpu, ipi_irqs[ipinr]);
 	}
+
+	exynos_ss_irq(ipinr, handle_IPI, irqs_disabled(), ESS_FLAG_IN);
 
 	switch (ipinr) {
 	case IPI_RESCHEDULE:
@@ -597,7 +606,7 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 
 	case IPI_CPU_STOP:
 		irq_enter();
-		ipi_cpu_stop(cpu);
+		ipi_cpu_stop(cpu, regs);
 		irq_exit();
 		break;
 
@@ -616,6 +625,9 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 		irq_exit();
 		break;
 #endif
+	case IPI_WAKEUP:
+		pr_debug("%s: IPI_WAKEUP\n", __func__);
+		break;
 
 	default:
 		pr_crit("CPU%u: Unknown IPI message 0x%x\n", cpu, ipinr);
@@ -624,6 +636,8 @@ void handle_IPI(int ipinr, struct pt_regs *regs)
 
 	if ((unsigned)ipinr < NR_IPI)
 		trace_ipi_exit(ipi_types[ipinr]);
+
+	exynos_ss_irq(ipinr, handle_IPI, irqs_disabled(), ESS_FLAG_OUT);
 	set_irq_regs(old_regs);
 }
 
@@ -639,22 +653,11 @@ void tick_broadcast(const struct cpumask *mask)
 }
 #endif
 
-/*
- * The number of CPUs online, not counting this CPU (which may not be
- * fully online and so not counted in num_online_cpus()).
- */
-static inline unsigned int num_other_online_cpus(void)
-{
-	unsigned int this_cpu_online = cpu_online(smp_processor_id());
-
-	return num_online_cpus() - this_cpu_online;
-}
-
 void smp_send_stop(void)
 {
 	unsigned long timeout;
 
-	if (num_other_online_cpus()) {
+	if (num_online_cpus() > 1) {
 		cpumask_t mask;
 
 		cpumask_copy(&mask, cpu_online_mask);
@@ -663,13 +666,15 @@ void smp_send_stop(void)
 		smp_cross_call(&mask, IPI_CPU_STOP);
 	}
 
-	/* Wait up to one second for other CPUs to stop */
-	timeout = USEC_PER_SEC;
-	while (num_other_online_cpus() && timeout--)
+	/* Wait up to 5 seconds for other CPUs to stop */
+	timeout = USEC_PER_SEC * 5;
+	while (num_online_cpus() > 1 && timeout--)
 		udelay(1);
 
-	if (num_other_online_cpus())
+	if (num_online_cpus() > 1)
 		pr_warning("SMP: failed to stop secondary CPUs\n");
+	else
+		pr_info("SMP: completed to stop secondary CPUS\n");
 }
 
 /*
@@ -678,4 +683,40 @@ void smp_send_stop(void)
 int setup_profiling_timer(unsigned int multiplier)
 {
 	return -EINVAL;
+}
+
+static void flush_all_cpu_cache(void *info)
+{
+	flush_cache_louis();
+}
+
+static void flush_all_cluster_cache(void *info)
+{
+	flush_cache_all();
+}
+
+void flush_all_cpu_caches(void)
+{
+	int cpu, cluster, target_cluster = -1;
+	struct cpumask shared_cache_flush_mask;
+
+	preempt_disable();
+	cpu = smp_processor_id();
+	cluster = MPIDR_AFFINITY_LEVEL(cpu_logical_map(cpu), 1);
+	cpumask_clear(&shared_cache_flush_mask);
+
+	/* make cpumask to flush shared cache */
+	for_each_online_cpu(cpu)
+		if (cluster != topology_physical_package_id(cpu) &&
+			target_cluster != topology_physical_package_id(cpu)) {
+			target_cluster = topology_physical_package_id(cpu);
+			cpumask_set_cpu(cpu, &shared_cache_flush_mask);
+		}
+
+	smp_call_function(flush_all_cpu_cache, NULL, 1);
+	smp_call_function_many(&shared_cache_flush_mask,
+			flush_all_cluster_cache, NULL, 1);
+	flush_cache_all();
+
+	preempt_enable();
 }
