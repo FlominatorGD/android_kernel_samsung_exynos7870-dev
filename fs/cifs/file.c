@@ -164,7 +164,6 @@ int cifs_posix_open(char *full_path, struct inode **pinode,
 			goto posix_open_ret;
 		}
 	} else {
-		cifs_revalidate_mapping(*pinode);
 		cifs_fattr_to_inode(*pinode, &fattr);
 	}
 
@@ -253,12 +252,6 @@ cifs_nt_open(char *full_path, struct inode *inode, struct cifs_sb_info *cifs_sb,
 	else
 		rc = cifs_get_inode_info(&inode, full_path, buf, inode->i_sb,
 					 xid, fid);
-
-	if (rc) {
-		server->ops->close(xid, tcon, fid);
-		if (rc == -ESTALE)
-			rc = -EOPENSTALE;
-	}
 
 out:
 	kfree(buf);
@@ -1602,20 +1595,8 @@ cifs_setlk(struct file *file, struct file_lock *flock, __u32 type,
 		rc = server->ops->mand_unlock_range(cfile, flock, xid);
 
 out:
-	if (flock->fl_flags & FL_POSIX) {
-		/*
-		 * If this is a request to remove all locks because we
-		 * are closing the file, it doesn't matter if the
-		 * unlocking failed as both cifs.ko and the SMB server
-		 * remove the lock on file close
-		 */
-		if (rc) {
-			cifs_dbg(VFS, "%s failed rc=%d\n", __func__, rc);
-			if (!(flock->fl_flags & FL_CLOSE))
-				return rc;
-		}
+	if (flock->fl_flags & FL_POSIX)
 		posix_lock_file_wait(file, flock);
-	}
 	return rc;
 }
 
