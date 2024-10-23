@@ -147,6 +147,8 @@ static int fec_decode_bufs(struct dm_verity *v, struct dm_verity_fec_io *fio,
 		block = fec_buffer_rs_block(v, fio, n, i);
 		res = fec_decode_rs8(v, fio, block, &par[offset], neras);
 		if (res < 0) {
+			dm_bufio_release(buf);
+
 			r = res;
 			goto error;
 		}
@@ -171,8 +173,6 @@ static int fec_decode_bufs(struct dm_verity *v, struct dm_verity_fec_io *fio,
 done:
 	r = corrected;
 error:
-	dm_bufio_release(buf);
-
 	if (r < 0 && neras)
 		DMERR_LIMIT("%s: FEC %llu: failed to correct: %d",
 			    v->data_dev->name, (unsigned long long)rsb, r);
@@ -265,14 +265,19 @@ static int fec_read_bufs(struct dm_verity *v, struct dm_verity_io *io,
 
 			continue;
 		}
-
+	
+		/* assumes block0's first 1024 bytes were all zeroes when encoding.*/
+		if(block == 0 && bufio == v->fec->data_bufio){
+			memset(bbuf, 0, 1024);
+			goto skip_erasure;
+		}
 		/* locate erasures if the block is on the data device */
 		if (bufio == v->fec->data_bufio &&
 		    verity_hash_for_block(v, io, block, want_digest,
 					  &is_zero) == 0) {
 			/* skip known zero blocks entirely */
 			if (is_zero)
-				goto done;
+				continue;
 
 			/*
 			 * skip if we have already found the theoretical
@@ -282,7 +287,7 @@ static int fec_read_bufs(struct dm_verity *v, struct dm_verity_io *io,
 			    fec_is_erasure(v, io, want_digest, bbuf))
 				fio->erasures[(*neras)++] = i;
 		}
-
+skip_erasure :
 		/*
 		 * deinterleave and copy the bytes that fit into bufs,
 		 * starting from block_offset
@@ -439,6 +444,8 @@ int verity_fec_decode(struct dm_verity *v, struct dm_verity_io *io,
 	struct dm_verity_fec_io *fio = fec_io(io);
 	u64 offset, res, rsb;
 
+	if (block == 0)
+		return -1;
 	if (!verity_fec_is_enabled(v))
 		return -EOPNOTSUPP;
 
@@ -449,8 +456,6 @@ int verity_fec_decode(struct dm_verity *v, struct dm_verity_io *io,
 
 	fio->level++;
 
-	if (type == DM_VERITY_BLOCK_TYPE_METADATA)
-		block = block - v->hash_start + v->data_blocks;
 
 	/*
 	 * For RS(M, N), the continuous FEC data is divided into blocks of N
