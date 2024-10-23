@@ -290,7 +290,7 @@ static noinline int vmalloc_fault(unsigned long address)
 	if (!pmd_k)
 		return -1;
 
-	if (pmd_large(*pmd_k))
+	if (pmd_huge(*pmd_k))
 		return 0;
 
 	pte_k = pte_offset_kernel(pmd_k, address);
@@ -388,6 +388,8 @@ static noinline int vmalloc_fault(unsigned long address)
 	if (!(address >= VMALLOC_START && address < VMALLOC_END))
 		return -1;
 
+	WARN_ON_ONCE(in_nmi());
+
 	/*
 	 * Copy kernel mappings over when needed. This can also
 	 * happen within a race in page table update. In the later
@@ -418,7 +420,7 @@ static noinline int vmalloc_fault(unsigned long address)
 	if (pud_none(*pud) || pud_pfn(*pud) != pud_pfn(*pud_ref))
 		BUG();
 
-	if (pud_large(*pud))
+	if (pud_huge(*pud))
 		return 0;
 
 	pmd = pmd_offset(pud, address);
@@ -429,7 +431,7 @@ static noinline int vmalloc_fault(unsigned long address)
 	if (pmd_none(*pmd) || pmd_pfn(*pmd) != pmd_pfn(*pmd_ref))
 		BUG();
 
-	if (pmd_large(*pmd))
+	if (pmd_huge(*pmd))
 		return 0;
 
 	pte_ref = pte_offset_kernel(pmd_ref, address);
