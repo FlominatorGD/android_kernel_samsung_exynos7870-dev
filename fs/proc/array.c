@@ -394,25 +394,13 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 
 	state = *get_task_state(task);
 	vsize = eip = esp = 0;
-	permitted = ptrace_may_access(task, PTRACE_MODE_READ_FSCREDS | PTRACE_MODE_NOAUDIT);
+	permitted = ptrace_may_access(task, PTRACE_MODE_READ | PTRACE_MODE_NOAUDIT);
 	mm = get_task_mm(task);
 	if (mm) {
 		vsize = task_vsize(mm);
-		/*
-		 * esp and eip are intentionally zeroed out.  There is no
-		 * non-racy way to read them without freezing the task.
-		 * Programs that need reliable values can use ptrace(2).
-		 *
-		 * The only exception is if the task is core dumping because
-		 * a program is not able to use ptrace(2) in that case. It is
-		 * safe because the task has stopped executing permanently.
-		 */
-		if (permitted && (task->flags & (PF_EXITING|PF_DUMPCORE))) {
-			if (try_get_task_stack(task)) {
-				eip = KSTK_EIP(task);
-				esp = KSTK_ESP(task);
-				put_task_stack(task);
-			}
+		if (permitted) {
+			eip = KSTK_EIP(task);
+			esp = KSTK_ESP(task);
 		}
 	}
 
@@ -590,7 +578,31 @@ int proc_pid_statm(struct seq_file *m, struct pid_namespace *ns,
 
 	return 0;
 }
+int proc_pid_statlmkd(struct seq_file *m, struct pid_namespace *ns,
+			struct pid *pid, struct task_struct *task)
+{
+	struct mm_struct *mm = get_task_mm(task);
+#ifdef CONFIG_MMU
+	unsigned long size = 0, resident = 0, swapresident = 0;
+	if (mm) {
+		task_statlmkd(mm, &size, &resident, &swapresident);
+		mmput(mm);
+	}
+#endif
+#ifndef CONFIG_MMU
+	unsigned long size = 0, resident = 0, shared = 0, text = 0, data = 0;
+	if (mm) {
+		size = task_statm(mm, &shared, &text, &data, &resident);
+		mmput(mm);
+	}
+#endif
+	seq_put_decimal_ull(m, 0, size);
+	seq_put_decimal_ull(m, ' ', resident);
+	seq_put_decimal_ull(m, ' ', swapresident);
+	seq_putc(m, '\n');
 
+	return 0;
+}
 #ifdef CONFIG_CHECKPOINT_RESTORE
 static struct pid *
 get_children_pid(struct inode *inode, struct pid *pid_prev, loff_t pos)
