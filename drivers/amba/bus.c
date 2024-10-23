@@ -18,10 +18,65 @@
 #include <linux/pm_domain.h>
 #include <linux/amba/bus.h>
 #include <linux/sizes.h>
+#include <linux/of.h>
 
 #include <asm/irq.h>
 
 #define to_amba_driver(d)	container_of(d, struct amba_driver, drv)
+
+static void adma_hw_reset(struct device *dev)
+{
+	struct device_node *np = dev->of_node;
+	unsigned int reg;
+	void __iomem *lpass_dma_reset;
+	unsigned int dma_reset_reg;
+	unsigned int dma_reset_bit;
+	unsigned int dma_reset_mask;
+	bool is_dma_reset_high = false;
+
+	if (of_find_property(np, "samsung,reset-reg", NULL)) {
+		if (of_property_read_u32(np, "samsung,reset-reg",
+					&dma_reset_reg)) {
+			dev_err(dev, "samsung,reset-reg has invalid value\n");
+			return;
+		}
+		if (of_property_read_u32(np, "samsung,reset-bit",
+					&dma_reset_bit)) {
+			dev_err(dev, "samsung,reset-reg has invalid value\n");
+			return;
+		}
+		if (of_find_property(np, "samsung,reset-high", NULL))
+			is_dma_reset_high = true;
+	} else {
+		dev_err(dev, "%s: No reset information found\n", __func__);
+		return;
+	}
+
+	dma_reset_mask = BIT(dma_reset_bit);
+
+	/*
+	 * Audio DMA block needs to be reset after system boot up, before we can
+	 * start using this IP. Doing that for Exynos3475 right now. The reset
+	 * sequence is different for different SoCs.
+	 */
+	lpass_dma_reset = ioremap(dma_reset_reg, SZ_32);
+
+	reg = __raw_readl(lpass_dma_reset);
+
+	if (is_dma_reset_high)
+		reg |= dma_reset_mask;
+	else
+		reg &= ~dma_reset_mask;
+	__raw_writel(reg, lpass_dma_reset);
+
+	if (is_dma_reset_high)
+		reg &= ~dma_reset_mask;
+	else
+		reg |= dma_reset_mask;
+	__raw_writel(reg, lpass_dma_reset);
+
+	iounmap(lpass_dma_reset);
+}
 
 static const struct amba_id *
 amba_lookup(const struct amba_id *table, struct amba_device *dev)
@@ -216,11 +271,10 @@ static int amba_remove(struct device *dev)
 {
 	struct amba_device *pcdev = to_amba_device(dev);
 	struct amba_driver *drv = to_amba_driver(dev->driver);
-	int ret = 0;
+	int ret;
 
 	pm_runtime_get_sync(dev);
-	if (drv->remove)
-		ret = drv->remove(pcdev);
+	ret = drv->remove(pcdev);
 	pm_runtime_put_noidle(dev);
 
 	/* Undo the runtime PM settings in amba_probe() */
@@ -237,9 +291,7 @@ static int amba_remove(struct device *dev)
 static void amba_shutdown(struct device *dev)
 {
 	struct amba_driver *drv = to_amba_driver(dev->driver);
-
-	if (drv->shutdown)
-		drv->shutdown(to_amba_device(dev));
+	drv->shutdown(to_amba_device(dev));
 }
 
 /**
@@ -252,13 +304,12 @@ static void amba_shutdown(struct device *dev)
  */
 int amba_driver_register(struct amba_driver *drv)
 {
-	if (!drv->probe)
-		return -EINVAL;
-
 	drv->drv.bus = &amba_bustype;
-	drv->drv.probe = amba_probe;
-	drv->drv.remove = amba_remove;
-	drv->drv.shutdown = amba_shutdown;
+
+#define SETFN(fn)	if (drv->fn) drv->drv.fn = amba_##fn
+	SETFN(probe);
+	SETFN(remove);
+	SETFN(shutdown);
 
 	return driver_register(&drv->drv);
 }
@@ -303,6 +354,9 @@ int amba_device_add(struct amba_device *dev, struct resource *parent)
 
 	WARN_ON(dev->irq[0] == (unsigned int)-1);
 	WARN_ON(dev->irq[1] == (unsigned int)-1);
+
+	if (strstr(dev_name(&dev->dev), "adma"))
+		adma_hw_reset(&dev->dev);
 
 	ret = request_resource(parent, &dev->res);
 	if (ret)
