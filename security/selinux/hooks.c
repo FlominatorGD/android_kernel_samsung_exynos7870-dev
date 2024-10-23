@@ -84,6 +84,11 @@
 #include <linux/export.h>
 #include <linux/msg.h>
 #include <linux/shm.h>
+#include <linux/fslog.h>
+
+// [ SEC_SELINUX_PORTING_COMMON
+#include <linux/delay.h>
+// ] SEC_SELINUX_PORTING_COMMON
 
 #include "avc.h"
 #include "objsec.h"
@@ -100,14 +105,32 @@ extern struct security_operations *security_ops;
 /* SECMARK reference count */
 static atomic_t selinux_secmark_refcount = ATOMIC_INIT(0);
 
+// [ SEC_SELINUX_PORTING_COMMON
+static DEFINE_MUTEX(selinux_sdcardfs_lock);
+// ] SEC_SELINUX_PORTING_COMMON
+
 #ifdef CONFIG_SECURITY_SELINUX_DEVELOP
+// [ SEC_SELINUX_PORTING_COMMON
+#if defined(CONFIG_ALWAYS_ENFORCE) && defined(CONFIG_RKP_KDP)
+RKP_RO_AREA int selinux_enforcing;
+#else
 int selinux_enforcing;
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 
 static int __init enforcing_setup(char *str)
 {
 	unsigned long enforcing;
 	if (!kstrtoul(str, 0, &enforcing))
+// [ SEC_SELINUX_PORTING_COMMON
+#if defined(CONFIG_SECURITY_SELINUX_ALWAYS_ENFORCE)
+ 		selinux_enforcing = 1;
+#elif defined(CONFIG_SECURITY_SELINUX_NEVER_ENFORCE)
+		selinux_enforcing = 0;
+#else
 		selinux_enforcing = enforcing ? 1 : 0;
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 	return 1;
 }
 __setup("enforcing=", enforcing_setup);
@@ -120,7 +143,13 @@ static int __init selinux_enabled_setup(char *str)
 {
 	unsigned long enabled;
 	if (!kstrtoul(str, 0, &enabled))
+// [ SEC_SELINUX_PORTING_COMMON
+#ifdef CONFIG_SECURITY_SELINUX_ALWAYS_ENFORCE
+		selinux_enabled = 1;
+#else
 		selinux_enabled = enabled ? 1 : 0;
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 	return 1;
 }
 __setup("selinux=", selinux_enabled_setup);
@@ -324,6 +353,18 @@ static void superblock_free_security(struct super_block *sb)
 	kfree(sbsec);
 }
 
+/* The file system's label must be initialized prior to use. */
+
+static const char *labeling_behaviors[7] = {
+	"uses xattr",
+	"uses transition SIDs",
+	"uses task SIDs",
+	"uses genfs_contexts",
+	"not configured for labeling",
+	"uses mountpoint labeling",
+	"uses native labeling",
+};
+
 static int inode_doinit_with_dentry(struct inode *inode, struct dentry *opt_dentry);
 
 static inline int inode_doinit(struct inode *inode)
@@ -393,8 +434,10 @@ static int selinux_is_genfs_special_handling(struct super_block *sb)
 	return	!strcmp(sb->s_type->name, "sysfs") ||
 		!strcmp(sb->s_type->name, "pstore") ||
 		!strcmp(sb->s_type->name, "debugfs") ||
+		!strcmp(sb->s_type->name, "rootfs") ||
 		!strcmp(sb->s_type->name, "tracefs") ||
-		!strcmp(sb->s_type->name, "rootfs");
+		!strcmp(sb->s_type->name, "f2fs") ||
+		!strcmp(sb->s_type->name, "sdcardfs");
 }
 
 static int selinux_is_sblabel_mnt(struct super_block *sb)
@@ -457,6 +500,14 @@ static int sb_finish_set_opts(struct super_block *sb)
 			goto out;
 		}
 	}
+
+	if (sbsec->behavior > ARRAY_SIZE(labeling_behaviors))
+		printk(KERN_ERR "SELinux: initialized (dev %s, type %s), unknown behavior\n",
+		       sb->s_id, sb->s_type->name);
+	else
+		printk(KERN_DEBUG "SELinux: initialized (dev %s, type %s), %s\n",
+		       sb->s_id, sb->s_type->name,
+		       labeling_behaviors[sbsec->behavior-1]);
 
 	sbsec->flags |= SE_SBINITIALIZED;
 	if (selinux_is_sblabel_mnt(sb))
@@ -1383,6 +1434,12 @@ static int inode_doinit_with_dentry(struct inode *inode, struct dentry *opt_dent
 				char *dev = inode->i_sb->s_id;
 				unsigned long ino = inode->i_ino;
 
+				/* To log callstack to selog when unlabeled */
+				SE_LOG("%s : ino(%lu) failed to get sid from context %s, rc : %d\n",
+						__func__, ino, context, rc);
+				dump_stack();
+				fslog_kmsg_selog(__func__, 12);
+
 				if (rc == -EINVAL) {
 					if (printk_ratelimit())
 						printk(KERN_NOTICE "SELinux: inode=%lu on dev=%s was found to have an invalid "
@@ -1923,9 +1980,8 @@ static inline u32 file_to_av(struct file *file)
 static inline u32 open_file_to_av(struct file *file)
 {
 	u32 av = file_to_av(file);
-	struct inode *inode = file_inode(file);
 
-	if (selinux_policycap_openperm && inode->i_sb->s_magic != SOCKFS_MAGIC)
+	if (selinux_policycap_openperm)
 		av |= FILE__OPEN;
 
 	return av;
@@ -2666,17 +2722,29 @@ static int selinux_sb_kern_mount(struct super_block *sb, int flags, void *data)
 	struct common_audit_data ad;
 	int rc;
 
+
+	// [ SEC_SELINUX_PORTING_COMMON
+	if((strcmp(sb->s_type->name,"sdcardfs")) == 0)
+		mutex_lock(&selinux_sdcardfs_lock);
+
 	rc = superblock_doinit(sb, data);
 	if (rc)
-		return rc;
+		goto out;
 
 	/* Allow all mounts performed by the kernel */
 	if (flags & MS_KERNMOUNT)
-		return 0;
+		goto out;
 
 	ad.type = LSM_AUDIT_DATA_DENTRY;
 	ad.u.dentry = sb->s_root;
-	return superblock_has_perm(cred, sb, FILESYSTEM__MOUNT, &ad);
+	rc = superblock_has_perm(cred, sb, FILESYSTEM__MOUNT, &ad);
+
+out:
+	if((strcmp(sb->s_type->name,"sdcardfs")) == 0)
+		mutex_unlock(&selinux_sdcardfs_lock);
+	// ] SEC_SELINUX_PORTING_COMMON
+
+	return rc;
 }
 
 static int selinux_sb_statfs(struct dentry *dentry)
@@ -2921,6 +2989,25 @@ static int selinux_inode_permission(struct inode *inode, int mask)
 	sid = cred_sid(cred);
 	isec = inode->i_security;
 
+// [ SEC_SELINUX_PORTING_COMMON
+	/* skip sid == 1(kernel), it means first boot time */
+	if(isec->initialized != 1 && sid != 1) {
+		int count = 5;
+
+		while(count-- > 0) {
+			printk(KERN_ERR "SELinux : inode->i_security is not initialized. waiting...(%d/5)\n", 5-count); 
+			udelay(500);
+			if(isec->initialized == 1) {
+				printk(KERN_ERR "SELinux : inode->i_security is INITIALIZED.\n"); 
+				break;
+			}
+		}
+		if(isec->initialized != 1) {
+			printk(KERN_ERR "SELinux : inode->i_security is not initialized. not fixed.\n"); 
+		}
+	}
+// ] SEC_SELINUX_PORTING_COMMON
+
 	rc = avc_has_perm_noaudit(sid, isec->sid, isec->sclass, perms, 0, &avd);
 	audited = avc_audit_required(perms, &avd, rc,
 				     from_access ? FILE__AUDIT_ACCESS : 0,
@@ -2937,7 +3024,6 @@ static int selinux_inode_permission(struct inode *inode, int mask)
 static int selinux_inode_setattr(struct dentry *dentry, struct iattr *iattr)
 {
 	const struct cred *cred = current_cred();
-	struct inode *inode = d_backing_inode(dentry);
 	unsigned int ia_valid = iattr->ia_valid;
 	__u32 av = FILE__WRITE;
 
@@ -2953,10 +3039,8 @@ static int selinux_inode_setattr(struct dentry *dentry, struct iattr *iattr)
 			ATTR_ATIME_SET | ATTR_MTIME_SET | ATTR_TIMES_SET))
 		return dentry_has_perm(cred, dentry, FILE__SETATTR);
 
-	if (selinux_policycap_openperm &&
-	    inode->i_sb->s_magic != SOCKFS_MAGIC &&
-	    (ia_valid & ATTR_SIZE) &&
-	    !(ia_valid & ATTR_FILE))
+	if (selinux_policycap_openperm && (ia_valid & ATTR_SIZE)
+			&& !(ia_valid & ATTR_FILE))
 		av |= FILE__OPEN;
 
 	return dentry_has_perm(cred, dentry, av);
@@ -3002,7 +3086,9 @@ static int selinux_inode_setxattr(struct dentry *dentry, const char *name,
 	struct superblock_security_struct *sbsec;
 	struct common_audit_data ad;
 	u32 newsid, sid = current_sid();
-	int rc = 0;
+	int rc = 0, rc1, rc2;
+	char *context, *context2;
+	u32 context_len, context_len2;
 
 	if (strcmp(name, XATTR_NAME_SELINUX))
 		return selinux_inode_setotherxattr(dentry, name);
@@ -3021,6 +3107,8 @@ static int selinux_inode_setxattr(struct dentry *dentry, const char *name,
 			  FILE__RELABELFROM, &ad);
 	if (rc)
 		return rc;
+
+	rc1 = security_sid_to_context(isec->sid, &context, &context_len);
 
 	rc = security_context_to_sid(value, size, &newsid, GFP_KERNEL);
 	if (rc == -EINVAL) {
@@ -3046,22 +3134,41 @@ static int selinux_inode_setxattr(struct dentry *dentry, const char *name,
 			audit_log_n_untrustedstring(ab, value, audit_size);
 			audit_log_end(ab);
 
+			if (!rc1) kfree(context);
 			return rc;
 		}
 		rc = security_context_to_sid_force(value, size, &newsid);
 	}
-	if (rc)
+	if (rc) {
+		if (!rc1) kfree(context);
 		return rc;
+	}
 
 	rc = avc_has_perm(sid, newsid, isec->sclass,
 			  FILE__RELABELTO, &ad);
-	if (rc)
+	if (rc) {
+		if (!rc1) kfree(context);
 		return rc;
+	}
 
 	rc = security_validate_transition(isec->sid, newsid, sid,
 					  isec->sclass);
-	if (rc)
+	if (rc) {
+		if (!rc1) kfree(context);
 		return rc;
+	}
+
+	rc2 = security_sid_to_context(newsid, &context2, &context_len2);
+	if (!rc1 && !rc2) {
+		if (strstr(context, "data_file") && strstr(context2, "unlabeled")) {
+			SE_LOG("%s : ino(%lu) context changed %s -> %s\n",
+					__func__, inode->i_ino, context, context2);
+			dump_stack();
+			fslog_kmsg_selog(__func__, 12);
+		}
+	}
+	if (!rc1) kfree(context);
+	if (!rc2) kfree(context2);
 
 	return avc_has_perm(newsid,
 			    sbsec->sid,
@@ -4908,7 +5015,6 @@ static int selinux_nlmsg_perm(struct sock *sk, struct sk_buff *skb)
 
 	return rc;
 }
-
 #ifdef CONFIG_NETFILTER
 
 static unsigned int selinux_ip_forward(struct sk_buff *skb,
@@ -5043,7 +5149,7 @@ static unsigned int selinux_ip_postroute_compat(struct sk_buff *skb,
 						int ifindex,
 						u16 family)
 {
-	struct sock *sk = skb_to_full_sk(skb);
+	struct sock *sk = skb->sk;
 	struct sk_security_struct *sksec;
 	struct common_audit_data ad;
 	struct lsm_network_audit net = {0,};
@@ -5098,7 +5204,7 @@ static unsigned int selinux_ip_postroute(struct sk_buff *skb,
 	if (!secmark_active && !peerlbl_active)
 		return NF_ACCEPT;
 
-	sk = skb_to_full_sk(skb);
+	sk = skb->sk;
 
 #ifdef CONFIG_XFRM
 	/* If skb->dst->xfrm is non-NULL then the packet is undergoing an IPsec
@@ -6188,7 +6294,13 @@ static struct security_operations selinux_ops = {
 static __init int selinux_init(void)
 {
 	if (!security_module_enable(&selinux_ops)) {
+// [ SEC_SELINUX_PORTING_COMMON
+#ifdef CONFIG_ALWAYS_ENFORCE
+		selinux_enabled = 1;
+#else
 		selinux_enabled = 0;
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 		return 0;
 	}
 
@@ -6214,7 +6326,11 @@ static __init int selinux_init(void)
 
 	if (avc_add_callback(selinux_netcache_avc_callback, AVC_CALLBACK_RESET))
 		panic("SELinux: Unable to register AVC netcache callback\n");
-
+// [ SEC_SELINUX_PORTING_COMMON
+#ifdef CONFIG_ALWAYS_ENFORCE
+		selinux_enforcing = 1;
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 	if (selinux_enforcing)
 		printk(KERN_DEBUG "SELinux:  Starting in enforcing mode\n");
 	else
@@ -6286,7 +6402,11 @@ static struct nf_hook_ops selinux_nf_ops[] = {
 static int __init selinux_nf_ip_init(void)
 {
 	int err;
-
+// [ SEC_SELINUX_PORTING_COMMON
+#ifdef CONFIG_ALWAYS_ENFORCE
+		selinux_enabled = 1;
+#endif
+// ] SEC_SELINUX_PORTING_COMMON
 	if (!selinux_enabled)
 		return 0;
 
