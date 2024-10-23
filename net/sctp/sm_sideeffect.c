@@ -412,7 +412,7 @@ void sctp_generate_proto_unreach_event(unsigned long data)
 		/* Try again later.  */
 		if (!mod_timer(&transport->proto_unreach_timer,
 				jiffies + (HZ/20)))
-			sctp_transport_hold(transport);
+			sctp_association_hold(asoc);
 		goto out_unlock;
 	}
 
@@ -428,7 +428,7 @@ void sctp_generate_proto_unreach_event(unsigned long data)
 
 out_unlock:
 	bh_unlock_sock(asoc->base.sk);
-	sctp_transport_put(transport);
+	sctp_association_put(asoc);
 }
 
 
@@ -500,8 +500,8 @@ static void sctp_do_8_2_transport_strike(sctp_cmd_seq_t *commands,
 	 * see SCTP Quick Failover Draft, section 5.1
 	 */
 	if ((transport->state == SCTP_ACTIVE) &&
-	   (transport->error_count < transport->pathmaxrxt) &&
-	   (transport->error_count > transport->pf_retrans)) {
+	   (asoc->pf_retrans < transport->pathmaxrxt) &&
+	   (transport->error_count > asoc->pf_retrans)) {
 
 		sctp_assoc_control_transport(asoc, transport,
 					     SCTP_TRANSPORT_PF,
