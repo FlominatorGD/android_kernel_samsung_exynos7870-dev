@@ -61,6 +61,10 @@
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
 
+#ifdef CONFIG_SECURITY_DEFEX
+#include <linux/defex.h>
+#endif
+
 static void exit_mm(struct task_struct *tsk);
 
 static void __unhash_process(struct task_struct *p, bool group_dead)
@@ -415,7 +419,7 @@ static void exit_mm(struct task_struct *tsk)
 	struct mm_struct *mm = tsk->mm;
 	struct core_state *core_state;
 
-	exit_mm_release(tsk, mm);
+	mm_release(tsk, mm);
 	if (!mm)
 		return;
 	sync_mm_rss(mm);
@@ -434,10 +438,7 @@ static void exit_mm(struct task_struct *tsk)
 		up_read(&mm->mmap_sem);
 
 		self.task = tsk;
-		if (self.task->flags & PF_SIGNALED)
-			self.next = xchg(&core_state->dumper.next, &self);
-		else
-			self.task = NULL;
+		self.next = xchg(&core_state->dumper.next, &self);
 		/*
 		 * Implies mb(), the result of xchg() must be visible
 		 * to core_state->dumper.
@@ -675,6 +676,10 @@ void do_exit(long code)
 	int group_dead;
 	TASKS_RCU(int tasks_rcu_i);
 
+#ifdef CONFIG_SECURITY_DEFEX
+	task_defex_zero_creds(current);
+#endif
+
 	profile_task_exit(tsk);
 
 	WARN_ON(blk_needs_flush_plug(tsk));
@@ -703,7 +708,16 @@ void do_exit(long code)
 	 */
 	if (unlikely(tsk->flags & PF_EXITING)) {
 		pr_alert("Fixing recursive fault but reboot is needed!\n");
-		futex_exit_recursive(tsk);
+		/*
+		 * We can do this unlocked here. The futex code uses
+		 * this flag just to verify whether the pi state
+		 * cleanup has been done or not. In the worst case it
+		 * loops once more. We pretend that the cleanup was
+		 * done as there is no way to return. Either the
+		 * OWNER_DIED bit is set by now or we push the blocked
+		 * task into the wait for ever nirwana as well.
+		 */
+		tsk->flags |= PF_EXITPIDONE;
 		set_current_state(TASK_UNINTERRUPTIBLE);
 		schedule();
 	}
@@ -711,6 +725,13 @@ void do_exit(long code)
 	exit_signals(tsk);  /* sets PF_EXITING */
 
 	schedtune_exit_task(tsk);
+
+	/*
+	 * tsk->flags are checked in the futex code to protect against
+	 * an exiting task cleaning up the robust pi futexes.
+	 */
+	smp_mb();
+	raw_spin_unlock_wait(&tsk->pi_lock);
 
 	if (unlikely(in_atomic()))
 		pr_info("note: %s[%d] exited with preempt_count %d\n",
@@ -786,6 +807,12 @@ void do_exit(long code)
 	 * Make sure we are holding no locks:
 	 */
 	debug_check_no_locks_held();
+	/*
+	 * We can do this unlocked here. The futex code uses this flag
+	 * just to verify whether the pi state cleanup has been done
+	 * or not. In the worst case it loops once more.
+	 */
+	tsk->flags |= PF_EXITPIDONE;
 
 	if (tsk->io_context)
 		exit_io_context(tsk);
@@ -853,6 +880,14 @@ void
 do_group_exit(int exit_code)
 {
 	struct signal_struct *sig = current->signal;
+
+#ifdef CONFIG_SEC_DEBUG_INIT_EXIT_PANIC
+	if (current->pid == 1) {
+		pr_err("[%s] trap before init(1) group exit, exit_code:%d\n",
+			current->comm, exit_code);
+		panic("Attempted to kill init task group! exitcode=0x%08x\n", exit_code);
+	}
+#endif
 
 	BUG_ON(exit_code & 0x80); /* core dumps don't get here */
 
