@@ -1078,7 +1078,6 @@ static void nfs_increment_seqid(int status, struct nfs_seqid *seqid)
 		case -NFS4ERR_BADXDR:
 		case -NFS4ERR_RESOURCE:
 		case -NFS4ERR_NOFILEHANDLE:
-		case -NFS4ERR_MOVED:
 			/* Non-seqid mutating errors */
 			return;
 	};
@@ -1385,7 +1384,6 @@ static int nfs4_reclaim_locks(struct nfs4_state *state, const struct nfs4_state_
 	struct inode *inode = state->inode;
 	struct nfs_inode *nfsi = NFS_I(inode);
 	struct file_lock *fl;
-	struct nfs4_lock_state *lsp;
 	int status = 0;
 
 	if (inode->i_flock == NULL)
@@ -1424,9 +1422,7 @@ static int nfs4_reclaim_locks(struct nfs4_state *state, const struct nfs4_state_
 			case -NFS4ERR_DENIED:
 			case -NFS4ERR_RECLAIM_BAD:
 			case -NFS4ERR_RECLAIM_CONFLICT:
-				lsp = fl->fl_u.nfs4_fl.owner;
-				if (lsp)
-					set_bit(NFS_LOCK_LOST, &lsp->ls_flags);
+				/* kill_proc(fl->fl_pid, SIGLOST, 1); */
 				status = 0;
 		}
 		spin_lock(&inode->i_lock);
