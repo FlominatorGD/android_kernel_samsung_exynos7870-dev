@@ -169,6 +169,9 @@ struct hid_item {
 #define HID_UP_LOGIVENDOR	0xffbc0000
 #define HID_UP_LNVENDOR		0xffa00000
 #define HID_UP_SENSOR		0x00200000
+#ifdef CONFIG_USB_HMT_SAMSUNG_INPUT
+#define HID_UP_HMTVENDOR		0xff020000
+#endif
 
 #define HID_USAGE		0x0000ffff
 
@@ -728,8 +731,11 @@ struct hid_ll_driver {
 
 /* Applications from HID Usage Tables 4/8/99 Version 1.1 */
 /* We ignore a few input applications that are not widely used */
+#ifdef CONFIG_USB_HMT_SAMSUNG_INPUT
+#define IS_INPUT_APPLICATION(a) (((a >= 0x00010000) && (a <= 0x00010008)) || (a == 0x00010080) || (a == 0x000c0001) || ((a >= 0x000d0002) && (a <= 0x000d0006)) || a == 0xff020001)
+#else
 #define IS_INPUT_APPLICATION(a) (((a >= 0x00010000) && (a <= 0x00010008)) || (a == 0x00010080) || (a == 0x000c0001) || ((a >= 0x000d0002) && (a <= 0x000d0006)))
-
+#endif
 /* HID core API */
 
 extern int hid_debug;
@@ -765,7 +771,7 @@ extern int hidinput_connect(struct hid_device *hid, unsigned int force);
 extern void hidinput_disconnect(struct hid_device *);
 
 int hid_set_field(struct hid_field *, unsigned, __s32);
-int hid_input_report(struct hid_device *, int type, u8 *, u32, int);
+int hid_input_report(struct hid_device *, int type, u8 *, int, int);
 int hidinput_find_field(struct hid_device *hid, unsigned int type, unsigned int code, struct hid_field **field);
 struct hid_field *hidinput_get_led_field(struct hid_device *hid);
 unsigned int hidinput_count_leds(struct hid_device *hid);
@@ -835,14 +841,10 @@ static inline void hid_device_io_stop(struct hid_device *hid) {
  * @max: maximal valid usage->code to consider later (out parameter)
  * @type: input event type (EV_KEY, EV_REL, ...)
  * @c: code which corresponds to this usage and type
- *
- * The value pointed to by @bit will be set to NULL if either @type is
- * an unhandled event type, or if @c is out of range for @type. This
- * can be used as an error condition.
  */
 static inline void hid_map_usage(struct hid_input *hidinput,
 		struct hid_usage *usage, unsigned long **bit, int *max,
-		__u8 type, unsigned int c)
+		__u8 type, __u16 c)
 {
 	struct input_dev *input = hidinput->input;
 	unsigned long *bmap = NULL;
@@ -869,7 +871,7 @@ static inline void hid_map_usage(struct hid_input *hidinput,
 
 	if (unlikely(c > limit || !bmap)) {
 		pr_warn_ratelimited("%s: Invalid code %d type %d\n",
-				    input->name, c, type);
+				input->name, c, type);
 		*bit = NULL;
 		return;
 	}
@@ -1079,7 +1081,7 @@ static inline void hid_hw_wait(struct hid_device *hdev)
 		hdev->ll_driver->wait(hdev);
 }
 
-int hid_report_raw_event(struct hid_device *hid, int type, u8 *data, u32 size,
+int hid_report_raw_event(struct hid_device *hid, int type, u8 *data, int size,
 		int interrupt);
 
 /* HID quirks API */
