@@ -617,8 +617,6 @@ smb2_clone_range(const unsigned int xid,
 			cpu_to_le32(min_t(u32, len, tcon->max_bytes_chunk));
 
 		/* Request server copy to target from src identified by key */
-		kfree(retbuf);
-		retbuf = NULL;
 		rc = SMB2_ioctl(xid, tcon, trgtfile->fid.persistent_fid,
 			trgtfile->fid.volatile_fid, FSCTL_SRV_COPYCHUNK_WRITE,
 			true /* is_fsctl */, (char *)pcchunk,
@@ -1220,11 +1218,6 @@ smb21_set_oplock_level(struct cifsInodeInfo *cinode, __u32 oplock,
 	oplock &= 0xFF;
 	if (oplock == SMB2_OPLOCK_LEVEL_NOCHANGE)
 		return;
-
-	/* Check if the server granted an oplock rather than a lease */
-	if (oplock & SMB2_OPLOCK_LEVEL_EXCLUSIVE)
-		return smb2_set_oplock_level(cinode, oplock, epoch,
-					     purge_cache);
 
 	if (oplock & SMB2_LEASE_READ_CACHING_HE) {
 		new_oplock |= CIFS_CACHE_READ_FLG;
