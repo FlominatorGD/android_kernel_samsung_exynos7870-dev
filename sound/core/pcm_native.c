@@ -35,7 +35,6 @@
 #include <sound/timer.h>
 #include <sound/minors.h>
 #include <asm/io.h>
-#include <linux/delay.h>
 #if defined(CONFIG_MIPS) && defined(CONFIG_DMA_NONCOHERENT)
 #include <dma-coherence.h>
 #endif
@@ -82,12 +81,12 @@ static DECLARE_RWSEM(snd_pcm_link_rwsem);
  * and this may lead to a deadlock when the code path takes read sem
  * twice (e.g. one in snd_pcm_action_nonatomic() and another in
  * snd_pcm_stream_lock()).  As a (suboptimal) workaround, let writer to
- * sleep until all the readers are completed without blocking by writer.
+ * spin until it gets the lock.
  */
-static inline void down_write_nonfifo(struct rw_semaphore *lock)
+static inline void down_write_nonblock(struct rw_semaphore *lock)
 {
 	while (!down_write_trylock(lock))
-		msleep(1);
+		cond_resched();
 }
 
 /**
@@ -417,9 +416,7 @@ int snd_pcm_hw_refine(struct snd_pcm_substream *substream,
 
 	hw = &substream->runtime->hw;
 	if (!params->info)
-		params->info = hw->info & ~(SNDRV_PCM_INFO_FIFO_IN_FRAMES |
-					    SNDRV_PCM_INFO_DRAIN_TRIGGER);
-
+		params->info = hw->info & ~SNDRV_PCM_INFO_FIFO_IN_FRAMES;
 	if (!params->fifo_size) {
 		m = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
 		i = hw_param_interval(params, SNDRV_PCM_HW_PARAM_CHANNELS);
@@ -1610,13 +1607,6 @@ static int snd_pcm_do_drain_init(struct snd_pcm_substream *substream, int state)
 			snd_pcm_post_stop(substream, new_state);
 		}
 	}
-
-	if (runtime->status->state == SNDRV_PCM_STATE_DRAINING &&
-	    runtime->trigger_master == substream &&
-	    (runtime->hw.info & SNDRV_PCM_INFO_DRAIN_TRIGGER))
-		return substream->ops->trigger(substream,
-					       SNDRV_PCM_TRIGGER_DRAIN);
-
 	return 0;
 }
 
@@ -1824,7 +1814,7 @@ static int snd_pcm_link(struct snd_pcm_substream *substream, int fd)
 		res = -ENOMEM;
 		goto _nolock;
 	}
-	down_write_nonfifo(&snd_pcm_link_rwsem);
+	down_write_nonblock(&snd_pcm_link_rwsem);
 	write_lock_irq(&snd_pcm_link_rwlock);
 	if (substream->runtime->status->state == SNDRV_PCM_STATE_OPEN ||
 	    substream->runtime->status->state != substream1->runtime->status->state ||
@@ -1871,7 +1861,7 @@ static int snd_pcm_unlink(struct snd_pcm_substream *substream)
 	struct snd_pcm_substream *s;
 	int res = 0;
 
-	down_write_nonfifo(&snd_pcm_link_rwsem);
+	down_write_nonblock(&snd_pcm_link_rwsem);
 	write_lock_irq(&snd_pcm_link_rwlock);
 	if (!snd_pcm_stream_linked(substream)) {
 		res = -EALREADY;
