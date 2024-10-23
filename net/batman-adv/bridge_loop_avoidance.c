@@ -366,10 +366,7 @@ static void batadv_bla_send_claim(struct batadv_priv *bat_priv, uint8_t *mac,
 			   skb->len + ETH_HLEN);
 	soft_iface->last_rx = jiffies;
 
-	if (in_interrupt())
-		netif_rx(skb);
-	else
-		netif_rx_ni(skb);
+	netif_rx(skb);
 out:
 	if (primary_if)
 		batadv_hardif_free_ref(primary_if);
